@@ -1,0 +1,32 @@
+[project]
+name = "epoch-engine"
+version = "0.1.0"
+description = "Trainer and evaluator for PyTorch models with a focus on simplicity and flexibility."
+authors = [{name = "Sergey Polivin", email = "s.polivin@gmail.com"}]
+keywords = ["pytorch", "deep-learning"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Development Status :: 3 - Alpha",
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+dependencies = [
+    "torch==2.5.0",
+    "torchvision==0.20.0",
+    "tqdm==4.67.0"
+]
+
+[project.optional-dependencies]
+build = ["setuptools", "wheel", "build", "twine"]
+linters = ["black", "isort"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["epoch_engine*"]
