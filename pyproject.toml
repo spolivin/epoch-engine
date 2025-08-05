@@ -1,6 +1,6 @@
 [project]
 name = "epoch-engine"
-version = "0.1.0"
+version = "0.1.1"
 description = "Trainer and evaluator for PyTorch models with a focus on simplicity and flexibility."
 authors = [{name = "Sergey Polivin", email = "s.polivin@gmail.com"}]
 keywords = ["pytorch", "deep-learning"]
@@ -21,7 +21,13 @@ dependencies = [
 
 [project.optional-dependencies]
 build = ["setuptools", "wheel", "build", "twine"]
-linters = ["black", "isort"]
+linters = ["black", "isort", "pre-commit"]
+
+[project.urls]
+Homepage = "https://github.com/spolivin/epoch-engine"
+Issues = "https://github.com/spolivin/epoch-engine/issues"
+Pull-requests = "https://github.com/spolivin/epoch-engine/pulls"
+Source = "https://github.com/spolivin/epoch-engine/tree/master/epoch_engine"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
