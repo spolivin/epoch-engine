@@ -21,12 +21,16 @@ class Encoder(nn.Module):
         # Creating a series of encoder blocks in accordance with channels in `encoder_channels`
         encoder_blocks = [
             self._make_encoder_block(in_channel, out_channel)
-            for in_channel, out_channel in zip(encoder_channels, encoder_channels[1:])
+            for in_channel, out_channel in zip(
+                encoder_channels, encoder_channels[1:]
+            )
         ]
         # Sequentially connecting the generated convolution blocks
         self.encoder_blocks = nn.Sequential(*encoder_blocks)
 
-    def _make_encoder_block(self, in_channels: int, out_channels: int) -> nn.Sequential:
+    def _make_encoder_block(
+        self, in_channels: int, out_channels: int
+    ) -> nn.Sequential:
         """Creates a convolution block with ReLU activation and MaxPooling.
 
         Args:
@@ -73,14 +77,18 @@ class Decoder(nn.Module):
         # Creating a series of decoder blocks in accordance with features in `decoder_features`
         decoder_blocks = [
             self._make_decoder_block(in_feature, out_feature)
-            for in_feature, out_feature in zip(decoder_features, decoder_features[1:])
+            for in_feature, out_feature in zip(
+                decoder_features, decoder_features[1:]
+            )
         ]
         # Sequentially connecting the generated feedforward blocks
         self.decoder_blocks = nn.Sequential(*decoder_blocks)
         # Creating the last layer of the Decoder
         self.last = nn.Linear(decoder_features[-1], num_labels)
 
-    def _make_decoder_block(self, in_features: int, out_features: int) -> nn.Sequential:
+    def _make_decoder_block(
+        self, in_features: int, out_features: int
+    ) -> nn.Sequential:
         """Creates a fully connected linear layer with Sigmoid activation.
 
         Args:
@@ -126,7 +134,7 @@ class EDNet(nn.Module):
             in_channels (int): Number of input channels for the image.
             encoder_channels (tuple[int]): Tuple of channels for the Encoder.
             decoder_features (tuple[int]): Tuple of channels for the Decoder.
-            num_labels (int): Number of ouput labels.
+            num_labels (int): Number of output labels.
         """
         super().__init__()
         # Setting up Encoder block
@@ -155,7 +163,9 @@ class EDNet(nn.Module):
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1) -> None:
+    def __init__(
+        self, in_channels: int, out_channels: int, stride: int = 1
+    ) -> None:
         """Builds a block of ResNet layer with 2 inner blocks (CONV + BN + SKIP CONNECTION).
 
         Args:
