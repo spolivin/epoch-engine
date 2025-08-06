@@ -75,6 +75,8 @@ We have also the already prepared dataloaders: `train_loader` and `valid_loader`
 import torch
 from sklearn.metrics import accuracy_score
 
+from epoch_engine.core.trainer import Trainer
+
 # Instantiating a Trainer (with auto device detection)
 trainer = Trainer(
     model=net,
@@ -108,7 +110,7 @@ trainer.run(
     epochs=5,
     seed=42,
     enable_tqdm=True,
-    )
+)
 ```
 
 ### Loading/saving checkpoints
@@ -132,6 +134,10 @@ trainer.load_checkpoint(path="checkpoints/checkpoint.pt")
 The basics of the developed API are presented in the `run_trainer.py` I built in the root of the repository. It can be run for instance as follows:
 
 ```bash
+# Installing scikit-learn for using metrics
+pip install -r requirements.txt
+
+# Running the Trainer
 python run_trainer.py --model=resnet --epochs=3 --batch-size=16
 ```
 > The training will be launched on the device automatically derived based on the CUDA availability and the final training checkpoint will be saved in `checkpoints` directory.
