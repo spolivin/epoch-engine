@@ -10,7 +10,7 @@ class CheckpointHandler:
     """Class for saving and loading trainer checkpoints."""
 
     def save_checkpoint(self, trainer, path: str) -> None:
-        """Saves the checkpoint: last trained epoch, model state and optimizer state.
+        """Saves the checkpoint: last trained epoch, trainer run ID, model state and optimizer state.
 
         Args:
             trainer: Trainer instance.
@@ -21,11 +21,12 @@ class CheckpointHandler:
         """
         if not hasattr(trainer, "optimizer"):
             raise ValueError(
-                "Optimizer must be configured before saving a checkpoint. Use `configure_optimizers` method."
+                "Optimizer must be configured before saving a checkpoint. Use 'configure_trainer' method."
             )
         torch.save(
             {
                 "epoch": trainer.last_epoch,
+                "run_id": trainer.run_id,
                 "model_state_dict": trainer.model.state_dict(),
                 "optimizer_state_dict": trainer.optimizer.state_dict(),
             },
@@ -33,7 +34,7 @@ class CheckpointHandler:
         )
 
     def load_checkpoint(self, trainer, path: str) -> None:
-        """Loads the checkpoint: last trained epoch, model state and optimizer state.
+        """Loads the checkpoint: last trained epoch, trainer run ID, model state and optimizer state.
 
         Args:
             trainer: Trainer instance.
@@ -44,11 +45,12 @@ class CheckpointHandler:
         """
         if not hasattr(trainer, "optimizer"):
             raise ValueError(
-                "Optimizer must be configured before loading a checkpoint. Use `configure_optimizers` method."
+                "Optimizer must be configured before loading a checkpoint. Use 'configure_optimizers' method."
             )
         # Loading the checkpoint file
         checkpoint = torch.load(path, weights_only=True)
         # Loading the data into the Trainer instance attributes
         trainer.last_epoch = checkpoint["epoch"]
+        trainer.run_id = checkpoint["run_id"]
         trainer.model.load_state_dict(checkpoint["model_state_dict"])
         trainer.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
