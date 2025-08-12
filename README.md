@@ -197,12 +197,12 @@ Additionally, the losses for each data set as well as the registered metrics for
                          "f1/valid": 0.982719354776437,
                          "epoch": 1
                     },
-                    ...
                ]
           }
      ]
 }
 ```
+> To make the training results representation readable, the above output shows the training/validation results for only one epoch but in case of training for more epochs, there would be a longer list of such dictionaries distinguishable by `epoch`.
 
 #### Resuming training
 
