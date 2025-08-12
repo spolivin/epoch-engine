@@ -230,3 +230,10 @@ pip install -r requirements.txt
 python run_trainer.py --model=resnet --epochs=3
 ```
 > The training will be launched on the device automatically derived based on the CUDA availability and the final training checkpoint will be saved in `checkpoints` directory.
+
+## TODOs
+
+- [ ] Add an option of storing Trainer's runs and metrics in local SQLite database with API to access it conveniently 
+- [ ] Add logging support via TensorBoard and/or Weights & Biases
+- [ ] Re-format the output of `training_process.json` to allow for more details and convenient and easy-to-read representation of metrics
+- [ ] Add lightweight tests
