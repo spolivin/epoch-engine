@@ -2,18 +2,18 @@ import argparse
 
 import torch
 import torch.nn as nn
-from sklearn.metrics import precision_score
-from torch.utils.data import DataLoader
+from sklearn.metrics import accuracy_score, f1_score, precision_score
+from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from epoch_engine.core.trainer import Trainer
-from epoch_engine.models.architectures import BasicBlock, EDNet, ResNet
+from epoch_engine.core import OptimizerConfig, SchedulerConfig, Trainer
+from epoch_engine.models import BasicBlock, EDNet, ResNet
 
 
 def prepare_datasets(
     download_dir: str = "./data", transform: transforms.Compose = None
 ) -> tuple:
-    """Prepare the MNIST datasets for training and validation.
+    """Prepares the MNIST datasets for training and validation.
 
     Args:
         download_dir (str, optional): Directory to download the dataset. Defaults to "./data".
@@ -28,30 +28,34 @@ def prepare_datasets(
     train_dataset = datasets.MNIST(
         root=download_dir, train=True, download=True, transform=transform
     )
-    valid_dataset = datasets.MNIST(
+    test_dataset = datasets.MNIST(
         root=download_dir, train=False, download=True, transform=transform
     )
 
-    return train_dataset, valid_dataset
+    return train_dataset, test_dataset
 
 
 def prepare_dataloaders(
     train_dataset: datasets.MNIST,
-    valid_dataset: datasets.MNIST,
+    test_dataset: datasets.MNIST,
     batch_size: int = 32,
     num_workers: int = 0,
 ) -> tuple:
-    """Prepare data loaders for training and validation.
+    """Prepares data loaders for training, validation and testing.
 
     Args:
         train_dataset (datasets.MNIST): The training dataset.
-        valid_dataset (datasets.MNIST): The validation dataset.
+        test_dataset (datasets.MNIST): The dataset to be divided into validation and testing sets.
         batch_size (int, optional): Batch size for the data loaders. Defaults to 32.
         num_workers (int, optional): Number of worker threads for data loading. Defaults to 0.
 
     Returns:
-        tuple: A tuple containing the training and validation data loaders.
+        tuple: A tuple containing the training, validation and testing data loaders.
     """
+    # Taking a subset to form a validation set
+    valid_dataset = Subset(test_dataset, torch.arange(1000, len(test_dataset)))
+    # Taking a subset to form the final testing set (1000 objects)
+    test_dataset_2 = Subset(test_dataset, torch.arange(1000))
 
     train_loader = DataLoader(
         train_dataset,
@@ -65,8 +69,14 @@ def prepare_dataloaders(
         shuffle=False,
         num_workers=num_workers,
     )
+    test_loader = DataLoader(
+        test_dataset_2,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+    )
 
-    return train_loader, valid_loader
+    return train_loader, valid_loader, test_loader
 
 
 parser = argparse.ArgumentParser(description="Run Trainer Example")
@@ -76,32 +86,20 @@ parser.add_argument(
 parser.add_argument(
     "--epochs", type=int, default=3, help="Number of epochs to train"
 )
-parser.add_argument(
-    "--batch-size",
-    type=int,
-    default=32,
-    help="Batch size for training and validation",
-)
-parser.add_argument(
-    "--resume-training",
-    type=bool,
-    default=False,
-    help="Resume training from checkpoint",
-)
-parser.add_argument(
-    "--ckpt-path", type=str, default=None, help="Path to the checkpoint file"
-)
 args = parser.parse_args()
 
 if __name__ == "__main__":
-    train_dataset, valid_dataset = prepare_datasets()
-    train_loader, valid_loader = prepare_dataloaders(
+    # Downloading and preparing the data
+    train_dataset, test_dataset = prepare_datasets()
+    # Preparing dataloaders for training, validation and testing sets
+    train_loader, valid_loader, test_loader = prepare_dataloaders(
         train_dataset=train_dataset,
-        valid_dataset=valid_dataset,
-        batch_size=args.batch_size,
+        test_dataset=test_dataset,
+        batch_size=32,
         num_workers=0,
     )
 
+    # Selecting the model for running the Trainer
     if args.model == "resnet":
         net = ResNet(
             in_channels=1,
@@ -119,50 +117,64 @@ if __name__ == "__main__":
     else:
         raise ValueError("Unsupported model type. Use 'resnet' or 'ednet'.")
 
-    loss_func = nn.CrossEntropyLoss()
-
+    # Instantiating a Trainer object
     trainer = Trainer(
         model=net,
-        criterion=loss_func,
+        criterion=nn.CrossEntropyLoss(),
         train_loader=train_loader,
         valid_loader=valid_loader,
         train_on="auto",
     )
-    # Registering an additional metric for evaluation
-    trainer.register_metric(
-        "precision",
-        lambda y_true, y_pred: precision_score(
-            y_true, y_pred, average="macro"
-        ),
-    )
-
-    print(f"Using device: {trainer.device.type}")
-
-    # Setting up the optimizer and scheduler
-    trainer.configure_optimizers(
+    # Setting up configs for optimizer and scheduler
+    optimizer_config = OptimizerConfig(
         optimizer_class=torch.optim.SGD,
-        optimizer_params={
-            "lr": 0.25,
-            "momentum": 0.75,
-        },
+        optimizer_params={"lr": 0.25, "momentum": 0.75},
+    )
+    scheduler_config = SchedulerConfig(
         scheduler_class=torch.optim.lr_scheduler.StepLR,
-        scheduler_params={"step_size": 2, "gamma": 0.1},
+        scheduler_params={"gamma": 0.1, "step_size": 2},
+        scheduler_level="epoch",
+    )
+    # Adding the configured optimizer and scheduler to the Trainer
+    trainer.configure_trainer(
+        optimizer_config=optimizer_config,
+        scheduler_config=scheduler_config,
+    )
+    # Registering metrics to be used for evaluation (all sets)
+    trainer.register_metrics(
+        {
+            "accuracy": accuracy_score,
+            "precision": lambda y_true, y_pred: precision_score(
+                y_true, y_pred, average="macro"
+            ),
+            "f1": lambda y_true, y_pred: f1_score(
+                y_true, y_pred, average="macro"
+            ),
+        }
     )
 
-    # If resuming training, load the checkpoint if provided
-    if args.resume_training and args.ckpt_path:
-        trainer.load_checkpoint(args.ckpt_path)
-    elif args.resume_training:
-        raise ValueError(
-            "Checkpoint path must be provided to resume training."
-        )
-
-    # Run the training process
+    # Run the training process (no run_id specified -> new run)
     trainer.run(
         epochs=args.epochs,
         seed=42,
         enable_tqdm=True,
     )
 
-    # Save the final model checkpoint
-    trainer.save_checkpoint(f"checkpoints/ckpt_{trainer.last_epoch}.pt")
+    # Evaluating the model on the test set
+    print("Computing metrics on test set. Standby...")
+    test_metrics = trainer.evaluate(loader=test_loader)
+    print(f"Test metrics: {test_metrics}")
+
+    # Resuming a training run for the already saved checkpoint (run_id specified)
+    print(f"Resuming training for 'run_id={trainer.run_id}'...")
+    trainer.run(
+        epochs=2,
+        run_id=trainer.run_id,
+        seed=42,
+        enable_tqdm=True,
+    )
+
+    # Evaluating the model on the test set after finishing another training cycle
+    print("Computing metrics on test set after resuming training. Standby...")
+    test_metrics = trainer.evaluate(loader=test_loader)
+    print(f"Test metrics: {test_metrics}")
