@@ -254,7 +254,7 @@ class Trainer:
 
         Raises:
             AttributeError: If `optimizer` is not set as a class attribute.
-            IOError: If when resuming the training from last checkpoint, checkpoint files are missing.
+            OSError: If when resuming the training from last checkpoint, checkpoint files are missing.
             ValueError: If `run_id` cannot be found in the training history.
         """
         # Checking that optimizer has been configured
