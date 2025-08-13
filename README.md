@@ -237,3 +237,4 @@ python run_trainer.py --model=resnet --epochs=3
 - [ ] Add logging support via TensorBoard and/or Weights & Biases
 - [ ] Re-format the output of `training_process.json` to allow for more details and convenient and easy-to-read representation of metrics
 - [ ] Add lightweight tests
+- [ ] Introduce an option to train using Automatic Mixed Precision (AMP)
