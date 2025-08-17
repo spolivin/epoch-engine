@@ -15,6 +15,7 @@
 * 💾 **Automatic checkpointing** — saves model weights, optimizer state and other important data after each epoch, with easy resuming via run ID.
 * 📊 **Metric tracking & plotting** — logs training/validation metrics to JSON and generates plots at the end of training.
 * 🚀 **Resuming training** — continue any previous run by providing its run ID.
+* ⚡ **Mixed precision training** - supports AMP with `torch.amp` and `GradScaler`.
 * 🧩 **Extensible** — easily add custom models, losses, optimizers, schedulers, and metrics.
 
 Designed to be lightweight, transparent, and beginner-friendly, without the overhead of larger frameworks like PyTorch Lightning.
@@ -89,9 +90,10 @@ trainer = Trainer(
     train_loader=train_loader,
     valid_loader=valid_loader,
     train_on="auto",
+    enable_amp=True,
 )
 ```
-> Parameter `train_on` will detect whether CUDA, MPS or CPU is to be used (when initialized with `"auto"`).
+> Parameter `train_on` will detect whether CUDA, MPS or CPU is to be used (when initialized with `"auto"`), while `enable_amp` will set the trainer to run mixed precision training (mixed precision works only on CUDA devices so enabling this for CPU will raise `RuntimeError`).
 
 #### Optimizer and scheduler
 
@@ -171,6 +173,7 @@ trainer_config = TrainerConfig(
     criterion=nn.CrossEntropyLoss(),
     train_loader=train_loader,
     valid_loader=valid_loader,
+    enable_amp=True,
     optimizer_config=OptimizerConfig(
         optimizer_class=torch.optim.SGD,
         optimizer_params={"lr": 0.25, "momentum": 0.75},
@@ -289,9 +292,9 @@ The basics of the developed API are presented in the `run_trainer.py` I built in
 pip install -r requirements.txt
 
 # Running the Trainer
-python run_trainer.py --model=resnet --epochs=3
+python run_trainer.py --model=resnet --epochs=3 --enable-amp=True
 ```
-> The training will be launched on the device automatically derived based on the CUDA availability and the final training checkpoint will be saved in `checkpoints` directory.
+> The training will be launched on the device automatically derived based on the CUDA availability and using mixed precision training (provided that the device is CUDA).
 
 ## TODOs
 
@@ -299,5 +302,5 @@ python run_trainer.py --model=resnet --epochs=3
 - [ ] Add logging support via TensorBoard and/or Weights & Biases
 - [ ] Re-format the output of `training_history.json` to allow for more details and convenient and easy-to-read representation of metrics
 - [ ] Add lightweight tests
-- [ ] Introduce an option to train using Automatic Mixed Precision (AMP)
+- [x] Introduce an option to train using Automatic Mixed Precision (AMP)
 - [x] Add plots generation for registered metrics within the tracking/logging system
