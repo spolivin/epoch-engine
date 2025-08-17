@@ -1,6 +1,6 @@
 [project]
 name = "epoch-engine"
-version = "0.1.3"
+version = "0.1.4"
 description = "A lightweight trainer and evaluator for PyTorch models with a focus on simplicity and flexibility."
 authors = [{name = "Sergey Polivin", email = "s.polivin@gmail.com"}]
 keywords = ["pytorch", "deep-learning"]
