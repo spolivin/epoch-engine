@@ -6,7 +6,12 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
-from epoch_engine.core import OptimizerConfig, SchedulerConfig, Trainer
+from epoch_engine.core import Trainer
+from epoch_engine.core.configs import (
+    OptimizerConfig,
+    SchedulerConfig,
+    TrainerConfig,
+)
 from epoch_engine.models import BasicBlock, EDNet, ResNet
 
 
@@ -117,32 +122,23 @@ if __name__ == "__main__":
     else:
         raise ValueError("Unsupported model type. Use 'resnet' or 'ednet'.")
 
-    # Instantiating a Trainer object
-    trainer = Trainer(
+    trainer_config = TrainerConfig(
+        # Base settings
         model=net,
         criterion=nn.CrossEntropyLoss(),
         train_loader=train_loader,
         valid_loader=valid_loader,
-        train_on="auto",
-    )
-    # Setting up configs for optimizer and scheduler
-    optimizer_config = OptimizerConfig(
-        optimizer_class=torch.optim.SGD,
-        optimizer_params={"lr": 0.25, "momentum": 0.75},
-    )
-    scheduler_config = SchedulerConfig(
-        scheduler_class=torch.optim.lr_scheduler.StepLR,
-        scheduler_params={"gamma": 0.1, "step_size": 2},
-        scheduler_level="epoch",
-    )
-    # Adding the configured optimizer and scheduler to the Trainer
-    trainer.configure_trainer(
-        optimizer_config=optimizer_config,
-        scheduler_config=scheduler_config,
-    )
-    # Registering metrics to be used for evaluation (all sets)
-    trainer.register_metrics(
-        {
+        # Optimizer + Scheduler
+        optimizer_config=OptimizerConfig(
+            optimizer_class=torch.optim.SGD,
+            optimizer_params={"lr": 0.25, "momentum": 0.75},
+        ),
+        scheduler_config=SchedulerConfig(
+            scheduler_class=torch.optim.lr_scheduler.StepLR,
+            scheduler_params={"gamma": 0.1, "step_size": 2},
+        ),
+        # Metrics for evaluation
+        metrics={
             "accuracy": accuracy_score,
             "precision": lambda y_true, y_pred: precision_score(
                 y_true, y_pred, average="macro"
@@ -150,8 +146,9 @@ if __name__ == "__main__":
             "f1": lambda y_true, y_pred: f1_score(
                 y_true, y_pred, average="macro"
             ),
-        }
+        },
     )
+    trainer = Trainer.from_config(config=trainer_config)
 
     # Run the training process (no run_id specified -> new run)
     trainer.run(
