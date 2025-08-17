@@ -487,7 +487,7 @@ class Trainer:
         x_batch, y_batch = x_batch.to(self.device), y_batch.to(self.device)
 
         if self.enable_amp and split == "train":
-            with torch.amp.autocast():
+            with torch.amp.autocast(device_type=self.device.type):
                 loss, outputs = self(x_batch=x_batch, y_batch=y_batch)
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
