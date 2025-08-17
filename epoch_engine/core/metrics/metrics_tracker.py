@@ -78,7 +78,7 @@ class MetricsTracker:
         return results
 
     def reset(self) -> None:
-        """Reset the metrics tracker."""
+        """Resets the metrics tracker."""
         self.metrics = {}
         self.preds = {}
         self.targets = {}
