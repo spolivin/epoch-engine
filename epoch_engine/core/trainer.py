@@ -53,6 +53,7 @@ class Trainer:
         train_loader: TorchDataloader,
         valid_loader: TorchDataloader,
         train_on: str = "auto",
+        enable_amp: bool = False,
     ) -> None:
         """Initializes a class instance.
 
@@ -78,6 +79,16 @@ class Trainer:
                 "Invalid device specified. Use 'auto', 'cpu', 'cuda', or 'mps'."
             )
         self.device = torch.device(device)
+
+        self.enable_amp = enable_amp
+        if self.enable_amp:
+            if self.device.type == "cuda":
+                self.scaler = torch.amp.GradScaler()
+            else:
+                raise RuntimeError(
+                    "CUDA device is not available but 'enable_amp' is set to True. "
+                    "Mixed precision can only be used on CUDA."
+                )
 
         # Model
         if not isinstance(model, TorchModel):
@@ -147,9 +158,12 @@ class Trainer:
         criterion = config.criterion
         train_loader, valid_loader = config.train_loader, config.valid_loader
         train_on = config.train_on
+        enable_amp = config.enable_amp
 
         # Initializing a Trainer instance
-        trainer = cls(model, criterion, train_loader, valid_loader, train_on)
+        trainer = cls(
+            model, criterion, train_loader, valid_loader, train_on, enable_amp
+        )
 
         # Configuring Trainer with optimizer and scheduler
         trainer.configure_trainer(
@@ -471,17 +485,25 @@ class Trainer:
         # Moving examples and labels batches to device chosen
         x_batch, y_batch = batch
         x_batch, y_batch = x_batch.to(self.device), y_batch.to(self.device)
-        # Computing loss and output tensor for the batch
-        loss, outputs = self(x_batch=x_batch, y_batch=y_batch)
 
-        # If training set, backpropagate
-        if split == "train":
-            loss.backward()
-            self.optimizer.step()
+        if self.enable_amp and split == "train":
+            with torch.amp.autocast():
+                loss, outputs = self(x_batch=x_batch, y_batch=y_batch)
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
             self.optimizer.zero_grad()
-            # Adjusting learning rate at batch-level
             if self.scheduler and self.scheduler_level == "batch":
                 self.scheduler.step()
+        else:
+            loss, outputs = self(x_batch=x_batch, y_batch=y_batch)
+            if split == "train":
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+                # Adjusting learning rate at batch-level
+                if self.scheduler and self.scheduler_level == "batch":
+                    self.scheduler.step()
 
         # Collecting batch-level metrics
         self._collect_metrics(

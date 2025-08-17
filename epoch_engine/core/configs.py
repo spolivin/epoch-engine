@@ -148,6 +148,7 @@ class TrainerConfig:
         valid_loader (TorchDataloader): Torch Dataloader for validation set.
         optimizer_config (OptimizerConfig): Configuration for Torch's optimizer.
         train_on (str): Option to determine device automatically or by specifying its name.
+        enable_amp (bool): Option to use Mixed Precision for computations.
         scheduler_config (SchedulerConfig): Configuration for Torch's scheduler.
         metrics (list[MetricConfig] | dict[str, Callable]): List of metric configurations.
     """
@@ -158,5 +159,6 @@ class TrainerConfig:
     valid_loader: TorchDataloader
     optimizer_config: OptimizerConfig
     train_on: str = "auto"
+    enable_amp: bool = False
     scheduler_config: SchedulerConfig | None = None
     metrics: list[MetricConfig] | dict[str, Callable] | None = None
