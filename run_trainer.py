@@ -91,6 +91,12 @@ parser.add_argument(
 parser.add_argument(
     "--epochs", type=int, default=3, help="Number of epochs to train"
 )
+parser.add_argument(
+    "--enable-amp",
+    type=bool,
+    default=False,
+    help="Flag to enable mixed precision",
+)
 args = parser.parse_args()
 
 if __name__ == "__main__":
@@ -128,6 +134,7 @@ if __name__ == "__main__":
         criterion=nn.CrossEntropyLoss(),
         train_loader=train_loader,
         valid_loader=valid_loader,
+        enable_amp=args.enable_amp,
         # Optimizer + Scheduler
         optimizer_config=OptimizerConfig(
             optimizer_class=torch.optim.SGD,
