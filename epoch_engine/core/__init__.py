@@ -3,5 +3,4 @@
 
 # ruff: noqa: F401
 
-from .configs import OptimizerConfig, SchedulerConfig
 from .trainer import Trainer

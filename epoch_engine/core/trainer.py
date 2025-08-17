@@ -5,28 +5,51 @@
 
 import os
 import uuid
-from typing import Any, Callable, TypeAlias
+from typing import Any, Callable
 
 import torch
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
 from tqdm import tqdm
 
 from .checkpoint_handler import CheckpointHandler
-from .configs import OptimizerConfig, SchedulerConfig
+from .configs import (
+    MetricConfig,
+    OptimizerConfig,
+    SchedulerConfig,
+    TrainerConfig,
+)
 from .metrics.metrics_logger import MetricsLogger
 from .metrics.metrics_tracker import MetricsTracker
-
-TorchDataloader: TypeAlias = torch.utils.data.DataLoader
-TorchModel: TypeAlias = torch.nn.Module
-TorchTensor: TypeAlias = torch.Tensor
+from .plotting import generate_plot_from_json
+from .types import TorchDataloader, TorchModel, TorchTensor
 
 
 class Trainer:
-    """Trainer of PyTorch models."""
+    """Trainer of PyTorch models.
+
+    Attributes:
+        model (TorchModel): PyTorch model instance.
+        criterion (Any): PyTorch loss function instance.
+        optimizer (Any): PyTorch optimizer instance.
+        train_loader (TorchDataloader): Torch Dataloader for training set.
+        valid_loader (TorchDataloader): Torch Dataloader for validation set.
+        device (torch.device): Device to be used to train the model.
+        optimizer (Optimizer): Instance of PyTorch optimizer.
+        scheduler (LRScheduler | ReduceLROnPlateau): Instance of PyTorch scheduler for learning rate.
+        scheduler_level (str): Level on which to apply scheduler.
+        last_epoch (int): Last epoch when training has been successfully finished.
+        metrics_tracker (MetricsTracker): Instance of `MetricsTracker` for handling computing metrics.
+        ckpt_handler (CheckpointHandler): Instance of `CheckpointHandler` for saving/loading checkpoints.
+        extra_metrics (bool): Flag for the case when additional metrics are computed.
+        run_id (str): Trainer run identifier.
+        metrics_to_plot (list[str]): List of metrics for which resulting plots need to be created.
+    """
 
     def __init__(
         self,
         model: TorchModel,
-        criterion: Any,
+        criterion: Callable,
         train_loader: TorchDataloader,
         valid_loader: TorchDataloader,
         train_on: str = "auto",
@@ -39,22 +62,6 @@ class Trainer:
             train_loader (TorchDataloader): Torch Dataloader for training set.
             valid_loader (TorchDataloader): Torch Dataloader for validation set.
             train_on (str, optional): Device to be used to train the model. Defaults to "auto".
-
-        Attributes:
-            model (TorchModel): PyTorch model instance.
-            criterion (Any): PyTorch loss function instance.
-            optimizer (Any): PyTorch optimizer instance.
-            train_loader (TorchDataloader): Torch Dataloader for training set.
-            valid_loader (TorchDataloader): Torch Dataloader for validation set.
-            device (torch.device): Device to be used to train the model.
-            scheduler (Any): Instance of PyTorch scheduler for learning rate. Defaults to None.
-            scheduler_level (str): Level on which to apply scheduler. Defaults to None.
-            last_epoch (int): Last epoch when training has been successfully finished. Defaults to 0.
-            metrics_tracker (MetricsTracker): Class for handling computing metrics.
-            metrics_logger (MetricsLogger): Class for logging metrics.
-            ckpt_handler (CheckpointHandler): Class for saving/loading checkpoints.
-            extra_metrics (bool): Flag for the case when additional metrics are computed. Defaults to False.
-            run_id (str): Trainer run identifier. Defaults to None.
 
         Raises:
             TypeError: If `model` is not an instance of `torch.nn.Module`.
@@ -78,6 +85,8 @@ class Trainer:
         self.model = model.to(self.device)
 
         # Setting loss function
+        if not isinstance(criterion, Callable):
+            raise TypeError("'criterion' is not callable")
         self.criterion = criterion
 
         # Setting dataloaders for training/validation sets
@@ -99,13 +108,13 @@ class Trainer:
 
         # Setting tracker/logger for metrics and checkpoints handler
         self.metrics_tracker = MetricsTracker()
-        self.metrics_logger = MetricsLogger(
-            filename="./runs/training_history.json"
-        )
         self.ckpt_handler = CheckpointHandler()
 
         self.extra_metrics = False  # Flag if extra metrics are registered
         self.run_id = None  # Trainer run identifier
+        self.metrics_to_plot = [
+            "loss"
+        ]  # Initializing metrics to plot (plotting "loss" by default)
 
     def _auto_detect_device_type(self) -> str:
         """Automatically detects the device type to use for training.
@@ -123,12 +132,43 @@ class Trainer:
         else:
             return "cpu"
 
+    @classmethod
+    def from_config(cls, config: TrainerConfig) -> "Trainer":
+        """Configures Trainer, sets optimizer/scheduler and registers metrics.
+
+        Args:
+            config (TrainerConfig): Trainer configuration.
+
+        Returns:
+            Trainer: Initialized Trainer.
+        """
+        # Retrieving main arguments for the Trainer
+        model = config.model
+        criterion = config.criterion
+        train_loader, valid_loader = config.train_loader, config.valid_loader
+        train_on = config.train_on
+
+        # Initializing a Trainer instance
+        trainer = cls(model, criterion, train_loader, valid_loader, train_on)
+
+        # Configuring Trainer with optimizer and scheduler
+        trainer.configure_trainer(
+            optimizer_config=config.optimizer_config,
+            scheduler_config=config.scheduler_config,
+        )
+
+        # Registering additional metrics if specified
+        if config.metrics is not None:
+            trainer.register_metrics(config.metrics)
+
+        return trainer
+
     def configure_trainer(
         self,
-        optimizer_class: Any | None = None,
+        optimizer_class: Optimizer | None = None,
         optimizer_params: dict[str, Any] | None = None,
         optimizer_config: OptimizerConfig | None = None,
-        scheduler_class: Any = None,
+        scheduler_class: LRScheduler | ReduceLROnPlateau | None = None,
         scheduler_params: dict[str, Any] = None,
         scheduler_level: str = "epoch",
         scheduler_config: SchedulerConfig | None = None,
@@ -136,17 +176,19 @@ class Trainer:
         """Configures optimizer and (optionally) scheduler.
 
         Args:
-            optimizer_class (Any, optional): Optimizer class from PyTorch. Defaults to None.
+            optimizer_class (Optimizer, optional): Optimizer class from PyTorch. Defaults to None.
             optimizer_params (dict[str, Any], optional): Optimizer parameters. Defaults to None.
             optimizer_config (OptimizerConfig, optional): Instance of OptimizerConfig. Defaults to None.
-            scheduler_class (Any, optional): Scheduler class from PyTorch. Defaults to None.
+            scheduler_class (LRScheduler | ReduceLROnPlateau, optional): Scheduler class from PyTorch. Defaults to None.
             scheduler_params (dict[str, Any], optional): Scheduler parameters. Defaults to None.
             scheduler_level (str, optional): Level for scheduler ("epoch" or "batch"). Defaults to "epoch".
             scheduler_config (SchedulerConfig, optional): Instance of SchedulerConfig. Defaults to None.
 
         Raises:
+            TypeError: if `optimizer_class` is not a subclass of `torch.optim.Optimizer`.
             TypeError: If `optimizer_params` or `scheduler_params` are not dictionaries.
-            TypeError: If `optimizer_config` or `scheduler_config` are instances of `OptimizerConfig` or `SchedulerConfig` respectively.
+            TypeError: If `optimizer_config` or `scheduler_config` are not instances of `OptimizerConfig` or `SchedulerConfig` respectively.
+            TypeError: if `scheduler_class` is not a subclass of `torch.optim.lr_scheduler.LRScheduler` or `torch.optim.lr_scheduler.ReduceLROnPlateau`.
             ValueError: if `optimizer_class` or `optimizer_config` are not provided as arguments.
             ValueError: if `optimizer_class` is provided but `optimizer_params` are not.
             ValueError: if `scheduler_class` is provided but `scheduler_params` are not.
@@ -160,6 +202,10 @@ class Trainer:
             )
         # Verifying that optimizer params are provided and are of correct type when using optimizer class
         if optimizer_class is not None:
+            if not issubclass(optimizer_class, Optimizer):
+                raise TypeError(
+                    "'optimizer_class' is not a subclass of 'torch.optim.Optimizer'"
+                )
             if optimizer_params is None:
                 raise ValueError(
                     "Optimizer class is provided by 'optimizer_params' are not initialized."
@@ -184,6 +230,13 @@ class Trainer:
         # Using scheduler if provided
         if scheduler_class is not None or scheduler_config is not None:
             if scheduler_class is not None:
+                if not issubclass(
+                    scheduler_class, (LRScheduler, ReduceLROnPlateau)
+                ):
+                    raise TypeError(
+                        "'scheduler_class' must be a subclass of 'torch.optim.lr_scheduler.LRScheduler' "
+                        "or 'torch.optim.lr_scheduler.ReduceLROnPlateau'."
+                    )
                 if scheduler_params is None:
                     raise ValueError(
                         "Scheduler class is provided by 'scheduler_params' are not initialized."
@@ -254,7 +307,6 @@ class Trainer:
 
         Raises:
             AttributeError: If `optimizer` is not set as a class attribute.
-            OSError: If when resuming the training from last checkpoint, checkpoint files are missing.
             ValueError: If `run_id` cannot be found in the training history.
         """
         # Checking that optimizer has been configured
@@ -271,16 +323,19 @@ class Trainer:
             # Checking if the target folder with checkpoints exists
             if os.path.exists(ckpts_path):
                 last_logged_epoch = len(os.listdir(ckpts_path))
-                # Error raised if resuming training is set by checkpoint files are missing
+                # Starting fresh run if resuming training is set by checkpoint files are missing
                 if last_logged_epoch == 0:
-                    raise OSError(
-                        "Cannot resume training, since checkpoint directory for 'run_id={run_id}' appears to be empty."
+                    print(
+                        f"Checkpoint directory for 'run_id={run_id}' appears to be empty. "
+                        f"Resuming not possible, starting new run for 'run_id={run_id}'."
                     )
-                # If checkpoint files are present, loading the latest checkpoint
-                last_ckpt_path = (
-                    ckpts_path + "/" + f"ckpt_epoch_{last_logged_epoch}.pt"
-                )
-                self.load_checkpoint(path=last_ckpt_path)
+                    self.run_id = run_id
+                else:
+                    # If checkpoint files are present, loading the latest checkpoint
+                    last_ckpt_path = (
+                        ckpts_path + "/" + f"ckpt_epoch_{last_logged_epoch}.pt"
+                    )
+                    self.load_checkpoint(path=last_ckpt_path)
             # Error raised is resuming training is set but 'run_id' does exist in history
             else:
                 raise ValueError(
@@ -298,7 +353,6 @@ class Trainer:
             ckpts_path + "/" + "ckpt_epoch_{0}.pt"
         )  # Name of the checkpoint saved after each epoch
         # Loading training history from the file or creating a new history
-        self.metrics_logger.load_history(run_id=self.run_id)
 
         # Setting seed
         if seed:
@@ -310,34 +364,44 @@ class Trainer:
         # Computing the number of total epochs to be trained (useful in case of additional trainings)
         total_epochs = epochs + self.last_epoch
         # Running training/validation loops
-        for epoch in range(self.last_epoch, total_epochs):
-            # Processing all training batches
-            self._train_one_epoch(
-                epoch=epoch, epochs=total_epochs, enable_tqdm=enable_tqdm
-            )
-            # Processing all validation batches
-            self._validate_one_epoch(
-                epoch=epoch, epochs=total_epochs, enable_tqdm=enable_tqdm
-            )
-            # Incrementing last epoch after successful training/validation
-            self.last_epoch = epoch + 1
+        try:
+            # Using custom context manager to make sure that history is not lost due to errors in loops below
+            with MetricsLogger(
+                filename="./runs/training_history.json", run_id=self.run_id
+            ) as logger:
+                for epoch in range(self.last_epoch, total_epochs):
+                    # Processing all training batches
+                    self._train_one_epoch(
+                        epoch=epoch,
+                        epochs=total_epochs,
+                        enable_tqdm=enable_tqdm,
+                    )
+                    # Processing all validation batches
+                    self._validate_one_epoch(
+                        epoch=epoch,
+                        epochs=total_epochs,
+                        enable_tqdm=enable_tqdm,
+                    )
+                    # Incrementing last epoch after successful training/validation
+                    self.last_epoch = epoch + 1
 
-            # Saving the checkpoint
-            self.save_checkpoint(path=ckpt_path.format(self.last_epoch))
+                    # Saving the checkpoint
+                    self.save_checkpoint(
+                        path=ckpt_path.format(self.last_epoch)
+                    )
 
-            # Computing epoch-level metrics
-            self.metrics = self.metrics_tracker.compute_metrics()
-            self.metrics["epoch"] = epoch + 1
+                    # Computing epoch-level metrics
+                    self.metrics = self.metrics_tracker.compute_metrics()
+                    self.metrics["epoch"] = epoch + 1
 
-            # Logging computed metrics
-            self.metrics_logger.log_metrics(
-                metrics=self.metrics, run_id=self.run_id
-            )
-            # Resetting metrics counters after successful training/validation
-            self.metrics_tracker.reset()
-
-        # Saving the collected metrics in a file
-        self.metrics_logger.save_history()
+                    # Logging computed metrics
+                    logger.log_metrics(metrics=self.metrics)
+                    # Resetting metrics counters after successful training/validation
+                    self.metrics_tracker.reset()
+        # Making sure that in case of error metric plots are generated for completed epoch runs
+        finally:
+            for metric in self.metrics_to_plot:
+                generate_plot_from_json(metric_name=metric, run_id=self.run_id)
 
     def _train_one_epoch(
         self, epoch: int, epochs: int, enable_tqdm: bool
@@ -396,11 +460,11 @@ class Trainer:
                 self._process_batch(batch=batch, split="valid")
                 pbar.update(1)
 
-    def _process_batch(self, batch: list[torch.Tensor], split: str) -> None:
+    def _process_batch(self, batch: list[TorchTensor], split: str) -> None:
         """Backpropagates model during training and collects batch-level metrics.
 
         Args:
-            batch (list[torch.Tensor]): Examples and labels.
+            batch (list[TorchTensor]): Examples and labels.
             split (str): Indicator of training or validation set.
         """
 
@@ -426,17 +490,17 @@ class Trainer:
 
     def _collect_metrics(
         self,
-        loss: torch.Tensor,
-        outputs: torch.Tensor,
-        labels: torch.Tensor,
+        loss: TorchTensor,
+        outputs: TorchTensor,
+        labels: TorchTensor,
         split: str,
     ) -> None:
         """Records loss and accuracy.
 
         Args:
-            loss (torch.Tensor): Value of loss function.
-            outputs (torch.Tensor): Output tensor.
-            labels (torch.Tensor): Batch of labels.
+            loss (TorchTensor): Value of loss function.
+            outputs (TorchTensor): Output tensor.
+            labels (TorchTensor): Batch of labels.
             split (str): Indicator of training or validation set.
         """
         # Updating loss
@@ -452,14 +516,26 @@ class Trainer:
                 targets=labels.cpu().numpy(),
             )
 
-    def register_metrics(self, metrics_dict: dict[str, Callable]) -> None:
+    def register_metrics(
+        self, metrics: list[MetricConfig] | dict[str, Callable]
+    ) -> None:
         """Registers a collection of metrics.
 
         Args:
-            metrics_dict (dict[str, Callable]): Dictionary of name-callable metrics.
+            metrics (list[MetricConfig] | dict[str, Callable]): Dictionary of name-callable metrics.
         """
-        for metric_name, metric_fn in metrics_dict.items():
-            self.register_metric(name=metric_name, metric_fn=metric_fn)
+        if isinstance(metrics, dict):
+            metrics = [
+                MetricConfig(name=k, fn=v, plot=True)
+                for k, v in metrics.items()
+            ]
+
+        for metric_config in metrics:
+            self.register_metric(
+                name=metric_config.name, metric_fn=metric_config.fn
+            )
+            if metric_config.plot:
+                self.metrics_to_plot.append(metric_config.name)
 
         # Setting a flag for extra metrics (needed for computing such metrics)
         self.extra_metrics = True
@@ -470,7 +546,14 @@ class Trainer:
         Args:
             name (str): Name of the metric.
             metric_fn (Callable): Function to compute the metric.
+
+        Raises:
+            TypeError: if the provided function is not a callable object.
         """
+        if not isinstance(metric_fn, Callable):
+            raise TypeError(
+                f"Metric function specified for '{name}' is not a callable object."
+            )
         self.metrics_tracker.register_metric(name=name, fn=metric_fn)
 
     def save_checkpoint(self, path: str) -> None:
