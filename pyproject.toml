@@ -1,7 +1,7 @@
 [project]
 name = "epoch-engine"
-version = "0.1.2"
-description = "Trainer and evaluator for PyTorch models with a focus on simplicity and flexibility."
+version = "0.1.3"
+description = "A lightweight trainer and evaluator for PyTorch models with a focus on simplicity and flexibility."
 authors = [{name = "Sergey Polivin", email = "s.polivin@gmail.com"}]
 keywords = ["pytorch", "deep-learning"]
 classifiers = [
@@ -16,7 +16,9 @@ license = {text = "MIT"}
 dependencies = [
     "torch==2.5.0",
     "torchvision==0.20.0",
-    "tqdm==4.67.0"
+    "tqdm==4.67.0",
+    "matplotlib==3.10.5",
+    "numpy==2.2.6"
 ]
 
 [project.optional-dependencies]
