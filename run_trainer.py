@@ -12,7 +12,7 @@ from epoch_engine.core.configs import (
     SchedulerConfig,
     TrainerConfig,
 )
-from epoch_engine.models import BasicBlock, EDNet, ResNet
+from epoch_engine.models import EDNet, ResNet
 
 
 def prepare_datasets(
@@ -114,8 +114,7 @@ if __name__ == "__main__":
     if args.model == "resnet":
         net = ResNet(
             in_channels=1,
-            block=BasicBlock,
-            num_blocks=[1, 1, 1],
+            num_blocks=[1, 3, 1],
             num_classes=10,
         )
     elif args.model == "ednet":
