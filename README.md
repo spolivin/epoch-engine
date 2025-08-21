@@ -298,9 +298,9 @@ python run_trainer.py --model=resnet --epochs=3 --enable-amp=True
 
 ## TODOs
 
-- [ ] Add an option of storing Trainer's runs and metrics in local SQLite database with API to access it conveniently
-- [ ] Add logging support via TensorBoard and/or Weights & Biases
-- [ ] Re-format the output of `training_history.json` to allow for more details and convenient and easy-to-read representation of metrics
+- [ ] Add gradient clipping
 - [ ] Add lightweight tests
+- [ ] Re-structure `TrainerConfig` and move some arguments to other methods in order not to overload the config
+- [ ] Change the structure of the generated `runs` directory to allow for more convenient structure
 - [x] Introduce an option to train using Automatic Mixed Precision (AMP)
 - [x] Add plots generation for registered metrics within the tracking/logging system
