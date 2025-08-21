@@ -234,8 +234,8 @@ class ResNet(nn.Module):
     def __init__(
         self,
         in_channels: int,
-        block: BasicBlock,
         num_blocks: list[int],
+        block: BasicBlock = BasicBlock,
         num_classes: int = 10,
     ) -> None:
         """Builds a ResNet model with 3 layers.
