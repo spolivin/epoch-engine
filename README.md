@@ -60,12 +60,11 @@ Let's suppose that we have constructed a model in PyTorch called `net` (in the e
 ```python
 import torch.nn as nn
 
-from epoch_engine.models import BasicBlock, ResNet
+from epoch_engine.models import ResNet
 
 # Instantiating a ResNet model for gray-scale images
 net = ResNet(
     in_channels=1,
-    block=BasicBlock,
     num_blocks=[3, 3, 3],
     num_classes=10,
 )
