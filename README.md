@@ -297,9 +297,9 @@ python run_trainer.py --model=resnet --epochs=3 --enable-amp=True
 
 ## TODOs
 
-- [ ] Add gradient clipping
+- [x] Add gradient clipping
 - [ ] Add lightweight tests
-- [ ] Re-structure `TrainerConfig` and move some arguments to other methods in order not to overload the config
-- [ ] Change the structure of the generated `runs` directory to allow for more convenient structure
+- [x] Re-structure `TrainerConfig` and move some arguments to other methods in order not to overload the config
+- [x] Change the structure of the generated `runs` directory to allow for more convenient structure
 - [x] Introduce an option to train using Automatic Mixed Precision (AMP)
 - [x] Add plots generation for registered metrics within the tracking/logging system
