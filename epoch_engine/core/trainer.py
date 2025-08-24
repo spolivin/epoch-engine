@@ -3,44 +3,42 @@
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
 
-import os
-import uuid
-from typing import Any, Callable
+from typing import Callable
 
 import torch
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
+import torch.nn as nn
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .checkpoint_handler import CheckpointHandler
 from .configs import (
     MetricConfig,
     OptimizerConfig,
     SchedulerConfig,
     TrainerConfig,
 )
-from .metrics.metrics_logger import MetricsLogger
-from .metrics.metrics_tracker import MetricsTracker
-from .plotting import generate_plot_from_json
-from .types import TorchDataloader, TorchModel, TorchTensor
+from .logger import TrainerLogger
+from .managers import DeviceManager, RunManager
+from .metrics import MetricsLogger, MetricsPlotter, MetricsTracker
 
 
 class Trainer:
     """Trainer of PyTorch models.
 
     Attributes:
-        model (TorchModel): PyTorch model instance.
-        criterion (Any): PyTorch loss function instance.
-        optimizer (Any): PyTorch optimizer instance.
-        train_loader (TorchDataloader): Torch Dataloader for training set.
-        valid_loader (TorchDataloader): Torch Dataloader for validation set.
-        device (torch.device): Device to be used to train the model.
+        model (nn.Module): PyTorch model instance.
+        criterion (Callable): PyTorch loss function instance.
+        train_loader (Dataloader): Torch Dataloader for training set.
+        valid_loader (Dataloader): Torch Dataloader for validation set.
+        test_loader (Dataloader | None): Torch Dataloader for test set.
         optimizer (Optimizer): Instance of PyTorch optimizer.
         scheduler (LRScheduler | ReduceLROnPlateau): Instance of PyTorch scheduler for learning rate.
         scheduler_level (str): Level on which to apply scheduler.
         last_epoch (int): Last epoch when training has been successfully finished.
         metrics_tracker (MetricsTracker): Instance of `MetricsTracker` for handling computing metrics.
-        ckpt_handler (CheckpointHandler): Instance of `CheckpointHandler` for saving/loading checkpoints.
+        metrics_plotter (MetricsPlotter): Instance of `MetricsPlotter` for plotting metrics.
+        logger (logging.Logger): Configured logger for logging Trainer events.
+        device_mgr (DeviceManager): Instance of `DeviceManager` for handling device placement/AMP.
+        run_mgr (RunManager): Instance of `RunManager` for handing run-specific operations.
         extra_metrics (bool): Flag for the case when additional metrics are computed.
         run_id (str): Trainer run identifier.
         metrics_to_plot (list[str]): List of metrics for which resulting plots need to be created.
@@ -48,234 +46,150 @@ class Trainer:
 
     def __init__(
         self,
-        model: TorchModel,
+        model: nn.Module,
         criterion: Callable,
-        train_loader: TorchDataloader,
-        valid_loader: TorchDataloader,
-        train_on: str = "auto",
-        enable_amp: bool = False,
+        train_loader: DataLoader,
+        valid_loader: DataLoader,
+        test_loader: DataLoader | None = None,
+        amp: bool = False,
     ) -> None:
         """Initializes a class instance.
 
         Args:
-            model (TorchModel): PyTorch model instance.
-            criterion (Any): PyTorch loss function instance.
-            train_loader (TorchDataloader): Torch Dataloader for training set.
-            valid_loader (TorchDataloader): Torch Dataloader for validation set.
-            train_on (str, optional): Device to be used to train the model. Defaults to "auto".
+            model (nn.Module): PyTorch model instance.
+            criterion (Callable): PyTorch loss function instance.
+            train_loader (Dataloader): Torch Dataloader for training set.
+            valid_loader (Dataloader): Torch Dataloader for validation set.
+            test_loader (Dataloader, optional): Torch Dataloader for test set. Defaults to None.
+            amp (bool, optional): Flag to apply mixed precision training. Defaults to False.
 
         Raises:
             TypeError: If `model` is not an instance of `torch.nn.Module`.
-            TypeError: If `train_loader` or `valid_loader` are not instances of `torch.utils.data.DataLoader`.
-            ValueError: If `train_on` is not one of `"auto"`, `"cpu"`, `"cuda"`, or `"mps"`.
+            TypeError: If `criterion` is not a callable object.
+            TypeError: If `train_loader` or `valid_loader` or `test_loader` are not instances of `torch.utils.data.DataLoader`.
         """
-        # Using the CUDA, MPS or CPU device or inferring one
-        if train_on == "auto":
-            device = self._auto_detect_device_type()
-        elif train_on in ("cpu", "cuda", "mps"):
-            device = train_on
-        else:
-            raise ValueError(
-                "Invalid device specified. Use 'auto', 'cpu', 'cuda', or 'mps'."
-            )
-        self.device = torch.device(device)
+        # Determining device automatically and handling AMP (if enabled)
+        self.device_mgr = DeviceManager(enable_amp=amp)
+        if self.device_mgr.enable_amp:
+            self.scaler = torch.amp.GradScaler()
 
-        self.enable_amp = enable_amp
-        if self.enable_amp:
-            if self.device.type == "cuda":
-                self.scaler = torch.amp.GradScaler()
-            else:
-                raise RuntimeError(
-                    "CUDA device is not available but 'enable_amp' is set to True. "
-                    "Mixed precision can only be used on CUDA."
-                )
+        # Validating model and moving it to device
+        if not isinstance(model, nn.Module):
+            raise TypeError("`model` must be an instance of `torch.nn.Module`")
+        self.model = self.device_mgr.move_to_device(model)
 
-        # Model
-        if not isinstance(model, TorchModel):
-            raise TypeError("'model' must be an instance of 'torch.nn.Module'")
-        self.model = model.to(self.device)
-
-        # Setting loss function
+        # Validating and setting loss function
         if not isinstance(criterion, Callable):
             raise TypeError("'criterion' is not callable")
         self.criterion = criterion
 
         # Setting dataloaders for training/validation sets
-        if not isinstance(train_loader, TorchDataloader) or not isinstance(
-            valid_loader, TorchDataloader
+        if not isinstance(train_loader, DataLoader) or not isinstance(
+            valid_loader, DataLoader
         ):
             raise TypeError(
-                "'train_loader' and 'valid_loader' must be instances of 'torch.utils.data.DataLoader'"
+                "`train_loader` and `valid_loader` must be instances of `torch.utils.data.DataLoader`"
             )
         self.train_loader = train_loader
         self.valid_loader = valid_loader
+        # Setting dataloader for test set (if set)
+        if test_loader is not None:
+            if not isinstance(test_loader, DataLoader):
+                raise TypeError(
+                    "`test_loader` must be instances of `torch.utils.data.DataLoader`"
+                )
+            self.test_loader = test_loader
 
-        # Setting scheduler-related attributes
+        # Setting scheduler-specific attributes
         self.scheduler = None
         self.scheduler_level = None
 
         # Setting epoch indicator
         self.last_epoch = 0
 
-        # Setting tracker/logger for metrics and checkpoints handler
+        # Setting tracker/logger for metrics and run manager for checkpoints
         self.metrics_tracker = MetricsTracker()
-        self.ckpt_handler = CheckpointHandler()
+        self.metrics_plotter = MetricsPlotter()
+        self.run_mgr = RunManager()
 
         self.extra_metrics = False  # Flag if extra metrics are registered
-        self.run_id = None  # Trainer run identifier
         self.metrics_to_plot = [
             "loss"
         ]  # Initializing metrics to plot (plotting "loss" by default)
 
-    def _auto_detect_device_type(self) -> str:
-        """Automatically detects the device type to use for training.
-
-        Returns:
-            str: The detected device type (CPU, CUDA, or MPS).
-        """
-        if torch.cuda.is_available():
-            return "cuda"
-        elif (
-            hasattr(torch.backends, "mps")
-            and torch.backends.mps.is_available()
-        ):
-            return "mps"
-        else:
-            return "cpu"
-
     @classmethod
-    def from_config(cls, config: TrainerConfig) -> "Trainer":
+    def from_config(
+        cls,
+        config: TrainerConfig,
+        optimizer_config: OptimizerConfig,
+        scheduler_config: SchedulerConfig | None = None,
+    ) -> "Trainer":
         """Configures Trainer, sets optimizer/scheduler and registers metrics.
 
         Args:
             config (TrainerConfig): Trainer configuration.
+            optimizer_config (OptimizerConfig): Optimizer configuration.
+            scheduler_config (SchedulerConfig, optional): Scheduler configuration. Defaults to None.
 
         Returns:
-            Trainer: Initialized Trainer.
+            Trainer: Initialized and fully configured Trainer.
         """
         # Retrieving main arguments for the Trainer
         model = config.model
         criterion = config.criterion
-        train_loader, valid_loader = config.train_loader, config.valid_loader
-        train_on = config.train_on
-        enable_amp = config.enable_amp
+        train_loader, valid_loader, test_loader = (
+            config.train_loader,
+            config.valid_loader,
+            config.test_loader,
+        )
+        amp = config.enable_amp
 
         # Initializing a Trainer instance
         trainer = cls(
-            model, criterion, train_loader, valid_loader, train_on, enable_amp
+            model, criterion, train_loader, valid_loader, test_loader, amp
         )
 
         # Configuring Trainer with optimizer and scheduler
-        trainer.configure_trainer(
-            optimizer_config=config.optimizer_config,
-            scheduler_config=config.scheduler_config,
+        trainer._configure_trainer(
+            optimizer_config=optimizer_config,
+            scheduler_config=scheduler_config,
         )
 
         # Registering additional metrics if specified
         if config.metrics is not None:
-            trainer.register_metrics(config.metrics)
+            trainer._register_metrics(metrics=config.metrics)
 
         return trainer
 
-    def configure_trainer(
+    def _configure_trainer(
         self,
-        optimizer_class: Optimizer | None = None,
-        optimizer_params: dict[str, Any] | None = None,
-        optimizer_config: OptimizerConfig | None = None,
-        scheduler_class: LRScheduler | ReduceLROnPlateau | None = None,
-        scheduler_params: dict[str, Any] = None,
-        scheduler_level: str = "epoch",
+        optimizer_config: OptimizerConfig,
         scheduler_config: SchedulerConfig | None = None,
     ) -> None:
-        """Configures optimizer and (optionally) scheduler.
-
-        Args:
-            optimizer_class (Optimizer, optional): Optimizer class from PyTorch. Defaults to None.
-            optimizer_params (dict[str, Any], optional): Optimizer parameters. Defaults to None.
-            optimizer_config (OptimizerConfig, optional): Instance of OptimizerConfig. Defaults to None.
-            scheduler_class (LRScheduler | ReduceLROnPlateau, optional): Scheduler class from PyTorch. Defaults to None.
-            scheduler_params (dict[str, Any], optional): Scheduler parameters. Defaults to None.
-            scheduler_level (str, optional): Level for scheduler ("epoch" or "batch"). Defaults to "epoch".
-            scheduler_config (SchedulerConfig, optional): Instance of SchedulerConfig. Defaults to None.
-
-        Raises:
-            TypeError: if `optimizer_class` is not a subclass of `torch.optim.Optimizer`.
-            TypeError: If `optimizer_params` or `scheduler_params` are not dictionaries.
-            TypeError: If `optimizer_config` or `scheduler_config` are not instances of `OptimizerConfig` or `SchedulerConfig` respectively.
-            TypeError: if `scheduler_class` is not a subclass of `torch.optim.lr_scheduler.LRScheduler` or `torch.optim.lr_scheduler.ReduceLROnPlateau`.
-            ValueError: if `optimizer_class` or `optimizer_config` are not provided as arguments.
-            ValueError: if `optimizer_class` is provided but `optimizer_params` are not.
-            ValueError: if `scheduler_class` is provided but `scheduler_params` are not.
-            ValueError: If scheduler_level is not "epoch" or "batch".
-        """
-        # Verifying the at least one way of setting optimizer is provided
-        if optimizer_class is None and optimizer_config is None:
-            raise ValueError(
-                "Either 'optimizer_class' or 'optimizer_config' should be provided. "
-                "If using 'optimizer_class' specify params in 'optimizer_params'."
+        """Configures optimizer and (optionally) scheduler."""
+        # Validating the optimizer config
+        if not isinstance(optimizer_config, OptimizerConfig):
+            raise TypeError(
+                "`optimizer_config` must be of type `OptimizerConfig`"
             )
-        # Verifying that optimizer params are provided and are of correct type when using optimizer class
-        if optimizer_class is not None:
-            if not issubclass(optimizer_class, Optimizer):
-                raise TypeError(
-                    "'optimizer_class' is not a subclass of 'torch.optim.Optimizer'"
-                )
-            if optimizer_params is None:
-                raise ValueError(
-                    "Optimizer class is provided by 'optimizer_params' are not initialized."
-                )
-            elif not isinstance(optimizer_params, dict):
-                raise TypeError("'optimizer_params' must be a dictionary")
-        # Instantiating an optimizer based on the way of setting it
-        if not optimizer_config:
-            self.optimizer = optimizer_class(
-                self.model.parameters(), **optimizer_params
-            )
-        else:
-            if not isinstance(optimizer_config, OptimizerConfig):
-                raise TypeError(
-                    "'optimizer_config' must be of type OptimizerConfig"
-                )
-            # Creating an instance from config
-            self.optimizer = optimizer_config.create(
-                model_params=self.model.parameters()
-            )
+        # Creating an instance from config
+        self.optimizer = optimizer_config.create(
+            model_params=self.model.parameters()
+        )
 
         # Using scheduler if provided
-        if scheduler_class is not None or scheduler_config is not None:
-            if scheduler_class is not None:
-                if not issubclass(
-                    scheduler_class, (LRScheduler, ReduceLROnPlateau)
-                ):
-                    raise TypeError(
-                        "'scheduler_class' must be a subclass of 'torch.optim.lr_scheduler.LRScheduler' "
-                        "or 'torch.optim.lr_scheduler.ReduceLROnPlateau'."
-                    )
-                if scheduler_params is None:
-                    raise ValueError(
-                        "Scheduler class is provided by 'scheduler_params' are not initialized."
-                    )
-                elif not isinstance(scheduler_params, dict):
-                    raise TypeError("'scheduler_params' must be a dictionary")
+        if scheduler_config is not None:
             # Checking the correctness of setting scheduler level
-            if scheduler_level not in ("epoch", "batch"):
+            if scheduler_config.scheduler_level not in ("epoch", "batch"):
                 raise ValueError("Invalid scheduler_level")
             # Instantiating a scheduler based on the way of setting it
-            if not scheduler_config:
-                self.scheduler_level = scheduler_level
-                self.scheduler = scheduler_class(
-                    self.optimizer, **scheduler_params
+            if not isinstance(scheduler_config, SchedulerConfig):
+                raise TypeError(
+                    "`scheduler_config` must be of type `SchedulerConfig`"
                 )
-            else:
-                if not isinstance(scheduler_config, SchedulerConfig):
-                    raise TypeError(
-                        "'scheduler_config' must be of type SchedulerConfig"
-                    )
-                self.scheduler_level = scheduler_config.scheduler_level
-                # Creating an instance from config
-                self.scheduler = scheduler_config.create(
-                    optimizer=self.optimizer
-                )
+            self.scheduler_level = scheduler_config.scheduler_level
+            # Creating an instance from config
+            self.scheduler = scheduler_config.create(optimizer=self.optimizer)
 
     def reset_scheduler(self) -> None:
         """Resetting and removing scheduler."""
@@ -283,8 +197,8 @@ class Trainer:
         self.scheduler_level = None
 
     def __call__(
-        self, x_batch: TorchTensor, y_batch: TorchTensor
-    ) -> tuple[TorchTensor, TorchTensor]:
+        self, x_batch: torch.Tensor, y_batch: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Computes loss and model outputs.
 
         Args:
@@ -305,84 +219,70 @@ class Trainer:
         run_id: str | None = None,
         seed: int = 42,
         enable_tqdm: bool = True,
+        clip_grad_norm: float | None = None,
     ) -> None:
         """Launches a training/validation procedure.
 
-        When `run_id` is not provided, initiates a new training run, where `runs`
-        folder is created with subfolders for this run and `traning_process.json` file
-        with training/metrics history. When providing `run_id`, checks if training with this
-        ID exists in history and resumes training from the last checkpoint.
+        When `run_id` is not provided, either initiates a new training run, where `runs`
+        folder is created with subfolders/auxiliary files for this run, or resumes the run
+        specified in `run_id` attribute (if already set up).
+
+        When providing `run_id`, checks if training with this ID exists in history and resumes
+        training from the last checkpoint.
 
         Args:
             epochs (int): Number of epochs to train for.
             run_id (str | None, optional): Trainer run identifier. Defaults to None.
             seed (int, optional): Random number generator seed. Defaults to 42.
             enable_tqdm (bool, optional): Flag to enable progress bar. Defaults to True.
-
-        Raises:
-            AttributeError: If `optimizer` is not set as a class attribute.
-            ValueError: If `run_id` cannot be found in the training history.
+            clip_grad_norm (float, optional): Max norm for gradient clipping. Defaults to None.
         """
-        # Checking that optimizer has been configured
-        if not hasattr(self, "optimizer"):
-            raise AttributeError(
-                "Optimizer must be configured before running the trainer. Use 'configure_trainer' method."
+        # Checking if `run_id` attribute is set or `run_id` argument is passed (resumed runs)
+        try:
+            run_info = self.run_mgr.init_run(run_id=run_id or self.run_id)
+        # Fallback to case when `run_id=None` and `run_id` attribute is not set yet (first run)
+        except AttributeError:
+            run_info = self.run_mgr.init_run(run_id=run_id)
+        self.run_id = run_info.run_id
+        ckpts_path = run_info.ckpts_path
+        # Instantiating a logger for logging events related to Trainer
+        self.logger = TrainerLogger().get_logger()
+
+        # Checking if there have been training runs before
+        if run_info.last_logged_epoch > 0:
+            # Loading the last checkpoint
+            ckpt_path = (
+                ckpts_path / f"ckpt_epoch_{run_info.last_logged_epoch}.pt"
             )
 
-        ckpts_path = (
-            "./runs/run_id={0}/checkpoints"  # Checkpoints path to check
-        )
-        if run_id:
-            ckpts_path = ckpts_path.format(run_id)
-            # Checking if the target folder with checkpoints exists
-            if os.path.exists(ckpts_path):
-                last_logged_epoch = len(os.listdir(ckpts_path))
-                # Starting fresh run if resuming training is set by checkpoint files are missing
-                if last_logged_epoch == 0:
-                    print(
-                        f"Checkpoint directory for 'run_id={run_id}' appears to be empty. "
-                        f"Resuming not possible, starting new run for 'run_id={run_id}'."
-                    )
-                    self.run_id = run_id
-                else:
-                    # If checkpoint files are present, loading the latest checkpoint
-                    last_ckpt_path = (
-                        ckpts_path + "/" + f"ckpt_epoch_{last_logged_epoch}.pt"
-                    )
-                    self.load_checkpoint(path=last_ckpt_path)
-            # Error raised is resuming training is set but 'run_id' does exist in history
-            else:
-                raise ValueError(
-                    f"Cannot resume training from 'run_id={run_id}', since it does not exist in history. "
-                    "Check the correctness of 'run_id'."
-                )
-        # If 'run_id' is not provided (resuming training is turned off), creating 'runs' folder and generating 'run_id'
-        else:
-            self.run_id = uuid.uuid4().hex[:6]  # Generating a new 'run_id'
-            # Creating a folder for a new run
-            ckpts_path = ckpts_path.format(self.run_id)
-            os.makedirs(ckpts_path)
+            checkpoint = self.run_mgr.load_checkpoint(path=ckpt_path)
 
-        ckpt_path = (
-            ckpts_path + "/" + "ckpt_epoch_{0}.pt"
-        )  # Name of the checkpoint saved after each epoch
-        # Loading training history from the file or creating a new history
+            # Loading state dicts for model and optimizer as well as last trained epoch
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            self.last_epoch = checkpoint["epoch"]
+
+            self.logger.info(
+                f"Resuming run 'run_id={run_info.run_id}' from epoch {self.last_epoch}"
+            )
+        else:
+            self.logger.info(
+                f"Starting a new run for 'run_id={run_info.run_id}'"
+            )
 
         # Setting seed
         if seed:
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed(seed)
-            else:
-                torch.manual_seed(seed)
+            self.device_mgr.set_seed(seed=seed)
+
+        # Setting max norm for gradient clipping
+        self.clip_grad_norm = clip_grad_norm
 
         # Computing the number of total epochs to be trained (useful in case of additional trainings)
         total_epochs = epochs + self.last_epoch
         # Running training/validation loops
         try:
             # Using custom context manager to make sure that history is not lost due to errors in loops below
-            with MetricsLogger(
-                filename="./runs/training_history.json", run_id=self.run_id
-            ) as logger:
+            with MetricsLogger(run_id=self.run_id) as metrics_logger:
                 for epoch in range(self.last_epoch, total_epochs):
                     # Processing all training batches
                     self._train_one_epoch(
@@ -398,10 +298,15 @@ class Trainer:
                     )
                     # Incrementing last epoch after successful training/validation
                     self.last_epoch = epoch + 1
+                    self.logger.info(f"Finished epoch {self.last_epoch}")
 
                     # Saving the checkpoint
-                    self.save_checkpoint(
-                        path=ckpt_path.format(self.last_epoch)
+                    ckpt_path = ckpts_path / f"ckpt_epoch_{self.last_epoch}.pt"
+                    self.run_mgr.save_checkpoint(
+                        path=ckpt_path,
+                        model=self.model,
+                        optimizer=self.optimizer,
+                        epoch=self.last_epoch,
                     )
 
                     # Computing epoch-level metrics
@@ -409,24 +314,23 @@ class Trainer:
                     self.metrics["epoch"] = epoch + 1
 
                     # Logging computed metrics
-                    logger.log_metrics(metrics=self.metrics)
+                    metrics_logger.log_metrics(metrics=self.metrics)
                     # Resetting metrics counters after successful training/validation
                     self.metrics_tracker.reset()
         # Making sure that in case of error metric plots are generated for completed epoch runs
         finally:
             for metric in self.metrics_to_plot:
-                generate_plot_from_json(metric_name=metric, run_id=self.run_id)
+                self.metrics_plotter.create_plot(
+                    metric_name=metric, run_id=self.run_id
+                )
+        self.logger.info(
+            f"Finished run 'run_id={run_info.run_id}' successfully at epoch {self.last_epoch}"
+        )
 
     def _train_one_epoch(
         self, epoch: int, epochs: int, enable_tqdm: bool
     ) -> None:
-        """Processes all training batches for one epoch.
-
-        Args:
-            epoch (int): Current epoch.
-            epochs (int): Total number of epochs.
-            enable_tqdm (bool): Indicator to turn on tqdm progress bar.
-        """
+        """Processes all training batches for one epoch."""
 
         with tqdm(
             total=len(self.train_loader),
@@ -452,13 +356,8 @@ class Trainer:
     def _validate_one_epoch(
         self, epoch: int, epochs: int, enable_tqdm: bool
     ) -> None:
-        """Processes all validation batches for one epoch.
+        """Processes all validation batches for one epoch."""
 
-        Args:
-            epoch (int): Current epoch.
-            epochs (int): Total number of epochs.
-            enable_tqdm (bool): Indicator to turn on tqdm progress bar.
-        """
         with tqdm(
             total=len(self.valid_loader),
             desc=f"Epoch {epoch + 1}/{epochs} [Validation]",
@@ -474,22 +373,24 @@ class Trainer:
                 self._process_batch(batch=batch, split="valid")
                 pbar.update(1)
 
-    def _process_batch(self, batch: list[TorchTensor], split: str) -> None:
-        """Backpropagates model during training and collects batch-level metrics.
-
-        Args:
-            batch (list[TorchTensor]): Examples and labels.
-            split (str): Indicator of training or validation set.
-        """
+    def _process_batch(self, batch: list[torch.Tensor], split: str) -> None:
+        """Backpropagates model during training and collects batch-level metrics."""
 
         # Moving examples and labels batches to device chosen
         x_batch, y_batch = batch
-        x_batch, y_batch = x_batch.to(self.device), y_batch.to(self.device)
+        x_batch, y_batch = self.device_mgr.move_to_device(
+            x_batch
+        ), self.device_mgr.move_to_device(y_batch)
 
-        if self.enable_amp and split == "train":
-            with torch.amp.autocast(device_type=self.device.type):
+        if self.device_mgr.enable_amp and split == "train":
+            with torch.amp.autocast(device_type=self.device_mgr.device.type):
                 loss, outputs = self(x_batch=x_batch, y_batch=y_batch)
             self.scaler.scale(loss).backward()
+            if self.clip_grad_norm:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), max_norm=self.clip_grad_norm
+                )
             self.scaler.step(self.optimizer)
             self.scaler.update()
             self.optimizer.zero_grad()
@@ -499,6 +400,10 @@ class Trainer:
             loss, outputs = self(x_batch=x_batch, y_batch=y_batch)
             if split == "train":
                 loss.backward()
+                if self.clip_grad_norm:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), max_norm=self.clip_grad_norm
+                    )
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 # Adjusting learning rate at batch-level
@@ -512,19 +417,12 @@ class Trainer:
 
     def _collect_metrics(
         self,
-        loss: TorchTensor,
-        outputs: TorchTensor,
-        labels: TorchTensor,
+        loss: torch.Tensor,
+        outputs: torch.Tensor,
+        labels: torch.Tensor,
         split: str,
     ) -> None:
-        """Records loss and accuracy.
-
-        Args:
-            loss (TorchTensor): Value of loss function.
-            outputs (TorchTensor): Output tensor.
-            labels (TorchTensor): Batch of labels.
-            split (str): Indicator of training or validation set.
-        """
+        """Records loss and registered metrics."""
         # Updating loss
         loss = loss.item()
         self.metrics_tracker.update(f"loss/{split}", loss)
@@ -538,82 +436,58 @@ class Trainer:
                 targets=labels.cpu().numpy(),
             )
 
-    def register_metrics(
+    def _register_metrics(
         self, metrics: list[MetricConfig] | dict[str, Callable]
     ) -> None:
         """Registers a collection of metrics.
 
-        Args:
-            metrics (list[MetricConfig] | dict[str, Callable]): Dictionary of name-callable metrics.
+        Metrics can be passed as either in the form of "str-Callable" dictionary,
+        in which case all such metrics will be set to be plotted at the end of trainer
+        run, or as list[MetricConfig] in case of needing to "turn off" plotting some metrics.
         """
+        # Checking if metrics are dict (setting plotting to True for all)
         if isinstance(metrics, dict):
             metrics = [
                 MetricConfig(name=k, fn=v, plot=True)
                 for k, v in metrics.items()
             ]
 
+        # Sequentially registering passed metrics
         for metric_config in metrics:
-            self.register_metric(
-                name=metric_config.name, metric_fn=metric_config.fn
+            if not isinstance(metric_config.fn, Callable):
+                raise TypeError(
+                    f"Metric function specified for `{metric_config.name}` is not a callable object."
+                )
+            self.metrics_tracker.register_metric(
+                name=metric_config.name, fn=metric_config.fn
             )
+            # Collecting metrics which need to be plotted
             if metric_config.plot:
                 self.metrics_to_plot.append(metric_config.name)
 
         # Setting a flag for extra metrics (needed for computing such metrics)
         self.extra_metrics = True
 
-    def register_metric(self, name: str, metric_fn: Callable) -> None:
-        """Registers a custom metric function.
-
-        Args:
-            name (str): Name of the metric.
-            metric_fn (Callable): Function to compute the metric.
-
-        Raises:
-            TypeError: if the provided function is not a callable object.
-        """
-        if not isinstance(metric_fn, Callable):
-            raise TypeError(
-                f"Metric function specified for '{name}' is not a callable object."
-            )
-        self.metrics_tracker.register_metric(name=name, fn=metric_fn)
-
-    def save_checkpoint(self, path: str) -> None:
-        """Saves trainer checkpoint.
-
-        Args:
-            path (str): Path to the checkpoint to be saved.
-        """
-        self.ckpt_handler.save_checkpoint(path=path, trainer=self)
-
-    def load_checkpoint(self, path: str) -> None:
-        """Loads trainer checkpoint.
-
-        Args:
-            path (str): Path to the checkpoint to be loaded.
-        """
-        self.ckpt_handler.load_checkpoint(path=path, trainer=self)
-
     @torch.no_grad()
-    def evaluate(self, loader: TorchDataloader) -> dict[str, float]:
-        """Evaluates the model on some test set.
+    def evaluate(self, loader: DataLoader | None = None) -> dict[str, float]:
+        """Evaluates the model on test set."""
+        if loader is not None:
+            if not isinstance(loader, DataLoader):
+                raise TypeError(
+                    "`loader` must be an instance of `torch.utils.data.DataLoader`"
+                )
+        else:
+            if not hasattr(self, "test_loader"):
+                raise ValueError(
+                    "Cannot evaluate since test loader is not set"
+                )
+            else:
+                loader = self.test_loader
 
-        Args:
-            loader (TorchDataloader): Torch Dataloader.
-
-        Raises:
-            TypeError: Exception raised in case input loader is not a DataLoader.
-
-        Returns:
-            dict[str, float]: Dictionary with computed metrics.
-        """
-        if not isinstance(loader, TorchDataloader):
-            raise TypeError(
-                "'loader' must be an instance of 'torch.utils.data.DataLoader'"
-            )
         for batch in loader:
             self._process_batch(batch, split="test")
 
         metrics = self.metrics_tracker.compute_metrics(test=True)
+        self.metrics_tracker.reset()
 
         return metrics
