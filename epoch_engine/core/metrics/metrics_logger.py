@@ -4,27 +4,40 @@
 # License: MIT License
 
 import json
+from pathlib import Path
+
+from ..logger import TrainerLogger
 
 
 class MetricsLogger:
     """Custom context manager for logging metrics to a file.
 
     Attributes:
-        filename (str): Name of a JSON file where to log metrics.
+        base_dir (str): Base directory where JSON file is to be stored.
+        filename (str): Path to a JSON file where to log metrics.
         run_id (str): Trainer's run ID.
+        logger (logging.Logger): Configured logger for logging Trainer events.
         current_run (dict[str, list[dict]]): Training logs belonging to current run ID.
         training_process (dict[str, list[dict]]): Full training logs.
     """
 
-    def __init__(self, filename: str, run_id: str) -> None:
-        """Initializes `MetricsLogger`.
+    def __init__(
+        self,
+        run_id: str,
+        base_dir: str = "runs",
+        logfile: str = "metrics_history.json",
+    ) -> None:
+        """Initializes a class instance.
 
         Args:
-            filename (str): Name of a JSON file where to log metrics.
             run_id (str): Trainer's run ID.
+            base_dir (str, optional): Base directory where JSON file is to be stored. Defaults to "runs".
+            logfile (str, optional): Name of a logfile. Defaults to "metrics_history.json".
         """
-        self.filename = filename
+        self.base_dir = Path(base_dir)
+        self.filename = self.base_dir / logfile
         self.run_id = run_id
+        self.logger = TrainerLogger().get_logger()
 
     def __enter__(self) -> "MetricsLogger":
         """Loads or creates a new history (JSON file) for the current run ID upon entry."""
@@ -33,6 +46,15 @@ class MetricsLogger:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Saves the recorded metrics history in JSON file upon error or exit."""
+        if exc_type is not None:
+            if exc_type == KeyboardInterrupt:
+                self.logger.info(
+                    f"Trainer run for 'run_id={self.run_id}' manually interrupted"
+                )
+            else:
+                self.logger.info(
+                    f"Trainer run for 'run_id={self.run_id}' interrupted due to unexpected error"
+                )
         self.save_history()
 
     def load_history(self) -> None:
