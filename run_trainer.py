@@ -8,6 +8,7 @@ from torchvision import datasets, transforms
 
 from epoch_engine.core import Trainer
 from epoch_engine.core.configs import (
+    MetricConfig,
     OptimizerConfig,
     SchedulerConfig,
     TrainerConfig,
@@ -84,6 +85,77 @@ def prepare_dataloaders(
     return train_loader, valid_loader, test_loader
 
 
+def setup_trainer(
+    model: nn.Module,
+    loaders: tuple[DataLoader],
+    amp: bool = False,
+    plot_metrics: bool = False,
+) -> Trainer:
+    """_summary_
+
+    Args:
+        model (nn.Module): _description_
+        loaders (tuple[TorchDataloader]): _description_
+
+    Returns:
+        Trainer: _description_
+    """
+    optimizer_config = OptimizerConfig(
+        optimizer_class=torch.optim.SGD,
+        optimizer_params={"lr": 0.25, "momentum": 0.75},
+    )
+
+    scheduler_config = SchedulerConfig(
+        scheduler_class=torch.optim.lr_scheduler.StepLR,
+        scheduler_params={"gamma": 0.1, "step_size": 2},
+    )
+
+    train_loader, valid_loader, test_loader = loaders
+    if plot_metrics:
+        metrics = {
+            "accuracy": accuracy_score,
+            "precision": lambda y_true, y_pred: precision_score(
+                y_true, y_pred, average="macro"
+            ),
+            "f1": lambda y_true, y_pred: f1_score(
+                y_true, y_pred, average="macro"
+            ),
+        }
+    else:
+        metrics = [
+            MetricConfig(name="accuracy", fn=accuracy_score, plot=False),
+            MetricConfig(
+                name="precision",
+                fn=lambda y_true, y_pred: precision_score(
+                    y_true, y_pred, average="macro"
+                ),
+                plot=False,
+            ),
+            MetricConfig(
+                name="f1",
+                fn=lambda y_true, y_pred: f1_score(
+                    y_true, y_pred, average="macro"
+                ),
+                plot=False,
+            ),
+        ]
+    trainer_config = TrainerConfig(
+        model=model,
+        criterion=nn.CrossEntropyLoss(),
+        train_loader=train_loader,
+        valid_loader=valid_loader,
+        test_loader=test_loader,
+        enable_amp=amp,
+        metrics=metrics,
+    )
+
+    return Trainer.from_config(
+        config=trainer_config,
+        optimizer_config=optimizer_config,
+        scheduler_config=scheduler_config,
+    )
+
+
 parser = argparse.ArgumentParser(description="Run Trainer Example")
 parser.add_argument(
     "--model", type=str, default=None, help="Model name to use"
@@ -96,6 +168,12 @@ parser.add_argument(
     type=bool,
     default=False,
     help="Flag to enable mixed precision",
+)
+parser.add_argument(
+    "--plot-metrics",
+    type=bool,
+    default=False,
+    help="Flag to plot all metrics at run end",
 )
 args = parser.parse_args()
 
@@ -127,57 +205,26 @@ if __name__ == "__main__":
     else:
         raise ValueError("Unsupported model type. Use 'resnet' or 'ednet'.")
 
-    trainer_config = TrainerConfig(
-        # Base settings
+    trainer = setup_trainer(
         model=net,
-        criterion=nn.CrossEntropyLoss(),
-        train_loader=train_loader,
-        valid_loader=valid_loader,
-        enable_amp=args.enable_amp,
-        # Optimizer + Scheduler
-        optimizer_config=OptimizerConfig(
-            optimizer_class=torch.optim.SGD,
-            optimizer_params={"lr": 0.25, "momentum": 0.75},
-        ),
-        scheduler_config=SchedulerConfig(
-            scheduler_class=torch.optim.lr_scheduler.StepLR,
-            scheduler_params={"gamma": 0.1, "step_size": 2},
-        ),
-        # Metrics for evaluation
-        metrics={
-            "accuracy": accuracy_score,
-            "precision": lambda y_true, y_pred: precision_score(
-                y_true, y_pred, average="macro"
-            ),
-            "f1": lambda y_true, y_pred: f1_score(
-                y_true, y_pred, average="macro"
-            ),
-        },
+        loaders=(train_loader, valid_loader, test_loader),
+        amp=args.enable_amp,
+        plot_metrics=args.plot_metrics,
     )
-    trainer = Trainer.from_config(config=trainer_config)
 
     # Run the training process (no run_id specified -> new run)
-    trainer.run(
-        epochs=args.epochs,
-        seed=42,
-        enable_tqdm=True,
-    )
+    trainer.run(epochs=args.epochs)
 
     # Evaluating the model on the test set
     print("Computing metrics on test set. Standby...")
-    test_metrics = trainer.evaluate(loader=test_loader)
+    test_metrics = trainer.evaluate()
     print(f"Test metrics: {test_metrics}")
 
     # Resuming a training run for the already saved checkpoint (run_id specified)
     print(f"Resuming training for 'run_id={trainer.run_id}'...")
-    trainer.run(
-        epochs=2,
-        run_id=trainer.run_id,
-        seed=42,
-        enable_tqdm=True,
-    )
+    trainer.run(epochs=1)
 
     # Evaluating the model on the test set after finishing another training cycle
     print("Computing metrics on test set after resuming training. Standby...")
-    test_metrics = trainer.evaluate(loader=test_loader)
+    test_metrics = trainer.evaluate()
     print(f"Test metrics: {test_metrics}")
