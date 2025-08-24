@@ -6,10 +6,10 @@
 from dataclasses import dataclass
 from typing import Any, Callable
 
+import torch.nn as nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler, ReduceLROnPlateau
-
-from .types import TorchDataloader, TorchModel
+from torch.utils.data import DataLoader
 
 
 class OptimizerConfig:
@@ -76,7 +76,7 @@ class SchedulerConfig:
         Args:
             scheduler_class (LRScheduler | ReduceLROnPlateau): Torch scheduler class. Must inherit from `torch.optim.lr_scheduler.LRScheduler` or `torch.optim.lr_scheduler.ReduceLROnPlateau`.
             scheduler_params (dict): Scheduler parameters for scheduler to be initialized with.
-            scheduler_level (str, optional): Level on which to apply learning rate adjustment (batch of epoch levels are supported). Defaults to "epoch".
+            scheduler_level (str, optional): Level on which to apply learning rate adjustment (batch or epoch level are supported). Defaults to "epoch".
 
         Raises:
             TypeError: if `scheduler_class` is not a subclass of `torch.optim.lr_scheduler.LRScheduler` or `torch.optim.lr_scheduler.ReduceLROnPlateau`.
@@ -144,21 +144,17 @@ class TrainerConfig:
     Attributes:
         model (TorchModel): PyTorch model instance.
         criterion (Callable): PyTorch loss function instance.
-        train_loader (TorchDataloader): Torch Dataloader for training set.
-        valid_loader (TorchDataloader): Torch Dataloader for validation set.
-        optimizer_config (OptimizerConfig): Configuration for Torch's optimizer.
-        train_on (str): Option to determine device automatically or by specifying its name.
+        train_loader (Dataloader): Torch Dataloader for training set.
+        valid_loader (Dataloader): Torch Dataloader for validation set.
+        test_loader (Dataloader): Torch Dataloader for test set.
         enable_amp (bool): Option to use Mixed Precision for computations.
-        scheduler_config (SchedulerConfig): Configuration for Torch's scheduler.
         metrics (list[MetricConfig] | dict[str, Callable]): List of metric configurations.
     """
 
-    model: TorchModel
+    model: nn.Module
     criterion: Callable
-    train_loader: TorchDataloader
-    valid_loader: TorchDataloader
-    optimizer_config: OptimizerConfig
-    train_on: str = "auto"
+    train_loader: DataLoader
+    valid_loader: DataLoader
+    test_loader: DataLoader | None = None
     enable_amp: bool = False
-    scheduler_config: SchedulerConfig | None = None
     metrics: list[MetricConfig] | dict[str, Callable] | None = None
