@@ -18,17 +18,17 @@ This library started as a **lightweight training framework** I could use in my o
 
 It provides:
 
-* Clean configurations with dataclasses
-* Automatic run management (checkpoints, plots, JSON history, logs)
-* Easy resume support for interrupted runs
-* A simple but extendable interface for adding metrics and training options
+* *Clean configurations* with dataclasses
+* Automatic *run management* (checkpoints, plots, JSON history, logs)
+* Easy *resume support* for interrupted or already finished runs
+* A simple but *extendable interface* for adding metrics and training options
 
 The goal is not to replace bigger frameworks, but to make my own workflow faster, cleaner, and more reproducible — and to practice designing a training system from scratch.
 
 ## ✨ Key Features
 
 * 🔧 **Config-driven setup** — pass model, loss, optimizer, scheduler, and metrics in simple configs.
-* 💾 **Automatic checkpointing** — saves model weights, optimizer state and other important data after each epoch, with easy resuming via run ID.
+* 💾 **Automatic checkpointing** — saves model weights and optimizer state after each epoch, with easy resuming via run ID.
 * 📊 **Metric tracking & plotting** — logs training/validation metrics to JSON and generates plots at the end of training.
 * 🚀 **Resuming training** — continue any previous run by providing its run ID.
 * ⚡ **Mixed precision training** - supports AMP with `torch.amp` and `GradScaler`.
@@ -89,94 +89,12 @@ loss_func = nn.CrossEntropyLoss()
 
 We have also the already prepared dataloaders: `train_loader` and `valid_loader` for training and validation sets respectively as well `test_loader` for testing the trained model on a separate set. Then, we can set up the Trainer in the following way.
 
-<!-- ### Multi-step setup
-
-#### Instantiating Trainer
-```python
-from epoch_engine.core import Trainer
-
-# Instantiating a Trainer (with auto device detection)
-trainer = Trainer(
-    model=net,
-    criterion=loss_func,
-    train_loader=train_loader,
-    valid_loader=valid_loader,
-    train_on="auto",
-    enable_amp=True,
-)
-```
-> Parameter `train_on` will detect whether CUDA, MPS or CPU is to be used (when initialized with `"auto"`), while `enable_amp` will set the trainer to run mixed precision training (mixed precision works only on CUDA devices so enabling this for CPU will raise `RuntimeError`).
-
-#### Optimizer and scheduler
-
-The next step is to configure optimizer and (optionally) scheduler which can be done in one of two ways:
-
-##### Configs
-
-```python
-from epoch_engine.core import OptimizerConfig, SchedulerConfig
-
-# Setting up configs for optimizer and scheduler
-optimizer_config = OptimizerConfig(
-    optimizer_class=torch.optim.SGD,
-    optimizer_params={"lr": 0.25, "momentum": 0.75},
-)
-scheduler_config = SchedulerConfig(
-    scheduler_class=torch.optim.lr_scheduler.StepLR,
-    scheduler_params={"gamma": 0.1, "step_size": 2},
-    scheduler_level="epoch",
-)
-
-trainer.configure_trainer(
-    optimizer_config=optimizer_config,
-    scheduler_config=scheduler_config,
-)
-```
-
-##### Direct
-
-```python
-trainer.configure_trainer(
-    optimizer_class=torch.optim.SGD,
-    optimizer_params={"lr": 0.25, "momentum": 0.75},
-    scheduler_class=torch.optim.lr_scheduler.StepLR,
-    scheduler_params={"gamma": 0.1, "step_size": 2},
-    scheduler_level="epoch",
-)
-```
-
-#### Metrics registration
-
-By default only loss is computed but we can also add extra metrics to track during Trainer run:
-
-```python
-from sklearn.metrics import accuracy_score, f1_score, precision_score
-
-trainer.register_metrics({
-    "accuracy": accuracy_score,
-    "precision": lambda y_true, y_pred: precision_score(y_true, y_pred, average="macro"),
-    "f1": lambda y_true, y_pred: f1_score(y_true, y_pred, average="macro"),
-})
-```
-> Important thing here is for the passed dict to map metric name we want to see in the logs to the callable objects which in turn map targets and predictions to floats.
-
-##### Advanced
-
-One can also register metrics via a custom `MetricConfig` which is similar to passing a dictionary but with an additional `plot` parameter for controlling for which metrics to generate plots (in case of passing a dictionary, `plot=True` is by default):
-
-```python
-from epoch_engine.core.configs import MetricConfig
-
-trainer.register_metrics([
-    MetricConfig(name="accuracy", fn=accuracy_score, plot=False),
-])
-```
-> In the example above we are registering an additional accuracy metric and specifically state that no plot need to be generated at the end of training run. -->
-
 ### Trainer set-up
 
 #### Optimizer and scheduler
 
+Via `OptimizerConfig` and `SchedulerConfig` we can prepare the optimizer and scheduler settings to be used during training.
+
 ```python
 from epoch_engine.core import OptimizerConfig, SchedulerConfig
 
@@ -191,6 +109,7 @@ scheduler_config = SchedulerConfig(
     scheduler_level="epoch",
 )
 ```
+> While it is required by the design to specify optimizer configuration, setting scheduler's configuration is not strictly necessary.
 
 #### Metrics
 
@@ -205,7 +124,7 @@ metrics = {
     "f1": lambda y_true, y_pred: f1_score(y_true, y_pred, average="macro"),
 }
 ```
-> Important thing here is for the passed dict to map metric name we want to see in the logs to the callable objects which in turn map targets and predictions to floats.
+> We specify a dictionary here called `metrics` to pass it later to the constructor. Important thing here is for the passed dict to map metric name we want to see in the logs to the callable objects which in turn should map targets and predictions to floats.
 
 ##### Advanced
 
@@ -214,13 +133,15 @@ One can also register metrics via a custom `MetricConfig` which is similar to pa
 ```python
 from epoch_engine.core.configs import MetricConfig
 
-trainer.register_metrics([
+metrics = [
     MetricConfig(name="accuracy", fn=accuracy_score, plot=False),
-])
+]
 ```
 > In the example above we are registering an additional accuracy metric and specifically state that no plot need to be generated at the end of training run.
 
 #### Trainer config
+
+The code below is the core of the library: we specify all required training options in `TrainerConfig`, the instance of which we then pass to `from_config` classmethod which also requires `optimizer_config` and (optionally) `scheduler_config` which we defined earlier:
 
 ```python
 from epoch_engine.core.configs import TrainerConfig
@@ -272,7 +193,7 @@ current-dir/
     │    |   ├── ckpt_epoch_3.pt
     │    |   ├── ckpt_epoch_4.pt
     │    |   └── ckpt_epoch_5.pt
-    |    ├── plots/
+    |    └── plots/
     |        ├── accuracy.png
     |        ├── f1.png
     |        ├── loss.png
@@ -282,9 +203,9 @@ current-dir/
     └── trainer_events.log
 ```
 
-At the beginning of the run, a new `run_id` is generated (if `run_id=None`) and in the current folder the method creates `runs` folder with a separate folder for the files related to the current run (in the above example folder named `run_id=82cc72` with the generated run ID). After each epoch the checkpoint (containing last trained epoch, Trainer's new run ID, model parameters and optimizer state) is saved to `checkpoints` subfolder.
+At the beginning of the run, a new `run_id` is generated (if `run_id=None`) and in the current folder the method creates `runs` folder with a separate folder for the files related to the current run (in the above example folder named `run_id=82cc72` with the generated run ID). After each epoch the checkpoint (containing last trained epoch, model parameters and optimizer state) is saved to `checkpoints` subfolder.
 
-At the end of the training, the plots for the registered metrics are saved as well (new in 0.1.3) in run-specific `plots` directory (new in 0.1.5).
+At the end of the training, the plots for the registered metrics are saved as well (new in 0.1.3) in run-specific `plots` directory (new in 0.1.5). The history of runs can be also tracked in `trainer_events.log` which is logging each time a user runs or interrupts a Trainer run.
 
 Additionally, the losses for each data set as well as the registered metrics for each epoch and training run are saved to `runs/metrics_history.json` and are written to each run. Such results can look for instance like this:
 
@@ -367,3 +288,5 @@ python run_trainer.py --model=resnet --epochs=3 --enable-amp=True --plot-metrics
 - [x] Introduce an option to train using Automatic Mixed Precision (AMP)
 - [x] Add plots generation for registered metrics within the tracking/logging system
 - [ ] Come up with a way to track metrics live during training/validation
+- [ ] Introduce multi-GPU training
+- [ ] Introduce callbacks for early stopping training, saving best checkpoint, etc.
