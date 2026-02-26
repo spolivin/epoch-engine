@@ -1,6 +1,6 @@
 [project]
 name = "epoch-engine"
-version = "0.1.5"
+version = "0.2.0"
 description = "A lightweight trainer and evaluator for PyTorch models with a focus on simplicity and flexibility."
 authors = [{name = "Sergey Polivin", email = "s.polivin@gmail.com"}]
 keywords = ["pytorch", "deep-learning"]
@@ -11,19 +11,21 @@ classifiers = [
   "Development Status :: 3 - Alpha",
 ]
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 dependencies = [
-    "torch==2.5.0",
-    "torchvision==0.20.0",
-    "tqdm==4.67.0",
-    "matplotlib==3.10.5",
-    "numpy==2.2.6"
+    "torch>=2.5.0",
+    "torchvision>=0.20.0",
+    "tqdm>=4.67.0",
+    "matplotlib>=3.10.5",
+    "numpy>=2.2.6"
 ]
 
 [project.optional-dependencies]
 build = ["setuptools", "wheel", "build", "twine"]
 linters = ["black", "isort", "pre-commit"]
+metrics = ["scikit-learn"]
+test = ["pytest"]
 
 [project.urls]
 Homepage = "https://github.com/spolivin/epoch-engine"
@@ -38,3 +40,17 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["epoch_engine*"]
+
+# --- uv-specific configuration ---
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url  = "https://download.pytorch.org/whl/cpu"
+explicit = true
