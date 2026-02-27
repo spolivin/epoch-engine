@@ -1,3 +1,8 @@
+"""Module containing `RunManager` class, responsible for handling run-specific events (checkpoints handling and run initialization)."""
+
+# Author: Sergey Polivin <s.polivin@gmail.com>
+# License: MIT License
+
 import os
 import uuid
 from dataclasses import dataclass
@@ -61,18 +66,20 @@ class RunManager:
         if run_id:
             ckpts_path = self.base_dir / f"run_id={run_id}" / self.ckpt_dir
             if os.path.exists(ckpts_path):
-                last_logged_epoch = len(os.listdir(ckpts_path))
-                if last_logged_epoch == 0:
+                epoch_ckpts = list(ckpts_path.glob("ckpt_epoch_*.pt"))
+                if not epoch_ckpts:
                     raise RuntimeError(
                         f"Checkpoint directory for 'run_id={run_id}' appears to be empty. "
                         "Resuming from this checkpoint is not possible."
                     )
-                else:
-                    return RunInfo(
-                        run_id=run_id,
-                        ckpts_path=ckpts_path,
-                        last_logged_epoch=last_logged_epoch,
-                    )
+                last_logged_epoch = max(
+                    int(f.stem.split("_")[-1]) for f in epoch_ckpts
+                )
+                return RunInfo(
+                    run_id=run_id,
+                    ckpts_path=ckpts_path,
+                    last_logged_epoch=last_logged_epoch,
+                )
             else:
                 raise ValueError(
                     f"Cannot resume training from 'run_id={run_id}', since it does not exist in history. "
