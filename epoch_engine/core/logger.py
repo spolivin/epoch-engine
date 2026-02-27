@@ -1,59 +1,52 @@
-"""Module for logging Trainer events."""
+"""Module for unified logging in Trainer that works with tqdm progress bars."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
 
-import logging
-from pathlib import Path
+import sys
 
 
 class TrainerLogger:
-    """Logger of Trainer events.
+    """Unified logging for Trainer that works with tqdm progress bars."""
 
-    Attributes:
-        base_dir (str): Base directory where logfile is to be created.
-        logfile_path (str): Full path to a logfile.
-        logger_name (str): Name of a logger.
-    """
+    def __init__(self, enable_tqdm: bool = True):
+        self.enable_tqdm = enable_tqdm
 
-    def __init__(
-        self,
-        base_dir: str = "runs",
-        log_file: str = "trainer_events.log",
-        logger_name: str = "trainer.global",
-    ) -> None:
-        """Initializes a class instance.
+    def info(self, message: str) -> None:
+        """Print info message (compatible with tqdm)."""
+        if self.enable_tqdm:
+            from tqdm import tqdm
 
-        Args:
-            base_dir (str, optional): Base directory where logfile is to be created. Defaults to "runs".
-            log_file (str, optional): Name of a logfile. Defaults to "trainer_events.log".
-            logger_name (str, optional): Name of a logger. Defaults to "trainer.global".
-        """
-        self.base_dir = Path(base_dir)
-        self.logfile_path = self.base_dir / log_file
-        self.logger_name = logger_name
+            tqdm.write(message)
+        else:
+            print(message)
 
-    def get_logger(self) -> logging.Logger:
-        """Retrieves the configured logger.
+    def warning(self, message: str) -> None:
+        """Print warning message (compatible with tqdm)."""
+        message = f"⚠️  {message}"
+        if self.enable_tqdm:
+            from tqdm import tqdm
 
-        Returns:
-            logging.Logger: Configured logger.
-        """
-        logger = logging.getLogger(self.logger_name)
-        logger.setLevel(logging.INFO)
+            tqdm.write(message)
+        else:
+            print(message, file=sys.stderr)
 
-        if not logger.handlers:
-            file_handler = logging.FileHandler(self.logfile_path)
-            file_handler.setLevel(logging.INFO)
+    def error(self, message: str) -> None:
+        """Print error message (compatible with tqdm)."""
+        message = f"❌ {message}"
+        if self.enable_tqdm:
+            from tqdm import tqdm
 
-            formatter = logging.Formatter(
-                fmt="[%(asctime)s] %(levelname)s: %(message)s",
-                datefmt="%d-%m-%Y %H:%M:%S",
-            )
-            file_handler.setFormatter(formatter)
+            tqdm.write(message)
+        else:
+            print(message, file=sys.stderr)
 
-            logger.addHandler(file_handler)
+    def success(self, message: str) -> None:
+        """Print success message (compatible with tqdm)."""
+        message = f"✅ {message}"
+        if self.enable_tqdm:
+            from tqdm import tqdm
 
-        logger.propagate = False
-
-        return logger
+            tqdm.write(message)
+        else:
+            print(message)

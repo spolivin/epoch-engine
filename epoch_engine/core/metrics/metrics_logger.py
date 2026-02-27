@@ -26,6 +26,7 @@ class MetricsLogger:
         run_id: str,
         base_dir: str = "runs",
         logfile: str = "metrics_history.json",
+        truncate_after_epoch: int | None = None,
     ) -> None:
         """Initializes a class instance.
 
@@ -33,11 +34,15 @@ class MetricsLogger:
             run_id (str): Trainer's run ID.
             base_dir (str, optional): Base directory where JSON file is to be stored. Defaults to "runs".
             logfile (str, optional): Name of a logfile. Defaults to "metrics_history.json".
+            truncate_after_epoch (int | None, optional): If set, drops any previously logged entries
+                with ``epoch > truncate_after_epoch`` when loading history. Used when resuming from a
+                checkpoint that is earlier than the last logged epoch (e.g. ``best.pt``). Defaults to None.
         """
         self.base_dir = Path(base_dir)
         self.filename = self.base_dir / logfile
         self.run_id = run_id
-        self.logger = TrainerLogger().get_logger()
+        self.truncate_after_epoch = truncate_after_epoch
+        self.logger = TrainerLogger()
 
     def __enter__(self) -> "MetricsLogger":
         """Loads or creates a new history (JSON file) for the current run ID upon entry."""
@@ -47,12 +52,12 @@ class MetricsLogger:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Saves the recorded metrics history in JSON file upon error or exit."""
         if exc_type is not None:
-            if exc_type == KeyboardInterrupt:
-                self.logger.info(
+            if isinstance(exc_val, KeyboardInterrupt):
+                self.logger.error(
                     f"Trainer run for 'run_id={self.run_id}' manually interrupted"
                 )
             else:
-                self.logger.info(
+                self.logger.error(
                     f"Trainer run for 'run_id={self.run_id}' interrupted due to unexpected error"
                 )
         self.save_history()
@@ -79,6 +84,13 @@ class MetricsLogger:
             training_process["runs"].append(new_run)
             self.training_process = training_process
             self.current_run = new_run
+
+        if self.truncate_after_epoch is not None:
+            self.current_run[run_key] = [
+                e
+                for e in self.current_run[run_key]
+                if e.get("epoch", 0) <= self.truncate_after_epoch
+            ]
 
     def log_metrics(self, metrics: dict[str, float | int]) -> None:
         """Logs metrics.
