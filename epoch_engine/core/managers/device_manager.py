@@ -1,3 +1,8 @@
+"""Module containing `DeviceManager` class, responsible for handling device placement and AMP settings."""
+
+# Author: Sergey Polivin <s.polivin@gmail.com>
+# License: MIT License
+
 import torch
 import torch.nn as nn
 
