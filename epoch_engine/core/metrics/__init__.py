@@ -3,6 +3,7 @@
 
 # ruff: noqa: F401
 
+from .display import format_metrics
 from .metrics_logger import MetricsLogger
 from .metrics_plotter import MetricsPlotter
 from .metrics_tracker import MetricsTracker
