@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/spolivin/epoch-engine)](https://github.com/spolivin/epoch-engine/blob/master/LICENSE.txt)
 [![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://pre-commit.com/)
 
-**EpochEngine** is a minimal yet flexible library for training and validating PyTorch models, currently focused on computer vision classification tasks. It wraps the PyTorch training loop with automatic device detection, checkpointing, metric tracking, AMP support, and a callback system — without hiding your optimizer or model behind extra config layers.
+**EpochEngine** is a minimal yet flexible library for training and validating PyTorch models. It wraps the PyTorch training loop with automatic device detection, checkpointing, metric tracking, AMP support, and a callback system — without hiding your optimizer or model behind extra config layers. It supports both **classification** and **regression** tasks.
 
 **The project is currently under active development, more changes expected.**
 
@@ -126,10 +126,50 @@ trainer = Trainer(
     metrics=metrics,              # optional, see below
     callbacks=callbacks,          # optional, see below
     enable_amp=True,              # optional, AMP only activates on CUDA
+    task="classification",        # optional, "classification" (default) or "regression"
 )
 ```
 
 > `Trainer` will automatically detect whether CUDA, MPS or CPU is to be used. The `scheduler` argument is optional; omitting it disables LR scheduling.
+
+The `task` parameter controls how targets are cast and how predictions are extracted for metrics:
+
+- `"classification"` (default) - casts targets to `.long()` and extracts predictions via `argmax`. Use with cross-entropy-style losses.
+- `"regression"` - casts targets to `.float()` and passes raw model outputs (squeezed to shape `(batch,)`) to metric functions. The model must output a tensor of shape `(batch, 1)`.
+
+#### Regression example
+
+```python
+import torch.nn as nn
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from epoch_engine.core import Trainer
+from epoch_engine.core.callbacks import BestCheckpoint, CheckpointPruner, EarlyStopping
+
+net = nn.Sequential(
+    nn.Linear(16, 64), nn.ReLU(),
+    nn.Linear(64, 32), nn.ReLU(),
+    nn.Linear(32, 1),             # output shape: (batch, 1)
+)
+optimizer = torch.optim.Adam(net.parameters(), lr=1e-3)
+
+trainer = Trainer(
+    model=net,
+    criterion=nn.MSELoss(),
+    optimizer=optimizer,
+    train_loader=train_loader,
+    valid_loader=valid_loader,
+    test_loader=test_loader,      # optional
+    metrics={"mse": mean_squared_error, "mae": mean_absolute_error},
+    callbacks=[
+        EarlyStopping(monitor="loss/valid", patience=3, mode="min"),
+        BestCheckpoint(monitor="loss/valid", mode="min"),
+        CheckpointPruner(keep_last_n=1),
+    ],
+    task="regression",
+)
+trainer.run(epochs=10)
+test_metrics = trainer.evaluate()
+```
 
 #### Metrics
 
@@ -401,9 +441,13 @@ make run-trainer-ednet
 # Run with ResNet model (default 5 epochs)
 make run-trainer-resnet
 
+# Run regression example (default 5 epochs)
+make run-trainer-regression
+
 # Override the number of epochs
 make run-trainer-ednet EPOCHS=3
 make run-trainer-resnet EPOCHS=10
+make run-trainer-regression EPOCHS=5
 ```
 
 > The training will be launched on the automatically detected device (CUDA → MPS → CPU). Metric plots are generated at the end of each run.
@@ -413,6 +457,7 @@ If `make` is not available (e.g. on Windows), run the script directly:
 ```bash
 python run_trainer.py --model resnet --epochs 5 --plot-metrics
 python run_trainer.py --model ednet --epochs 5 --plot-metrics
+python run_trainer.py --task regression --epochs 5 --plot-metrics
 ```
 
 ## TODOs
@@ -425,4 +470,5 @@ python run_trainer.py --model ednet --epochs 5 --plot-metrics
 - [x] Add plots generation for registered metrics within the tracking/logging system
 - [x] Introduce callbacks for early stopping training, saving best checkpoint, etc.
 - [x] Come up with a way to track metrics live during training/validation
+- [x] Add regression task support (`task="regression"`)
 - [ ] Introduce multi-GPU training
