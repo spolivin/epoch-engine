@@ -60,6 +60,7 @@ class Trainer:
         metrics: list[MetricConfig] | dict[str, Callable] | None = None,
         callbacks: list[Callback] | None = None,
         enable_amp: bool = False,
+        task: str = "classification",
     ) -> None:
         """Initializes a class instance.
 
@@ -75,6 +76,9 @@ class Trainer:
             metrics (list[MetricConfig] | dict[str, Callable], optional): Extra metrics to track. Defaults to None.
             callbacks (list[Callback], optional): Callbacks to register. Defaults to None.
             enable_amp (bool, optional): Flag to apply mixed precision training. Defaults to False.
+            task (str, optional): Task type - "classification" or "regression". Controls
+                target dtype casting and prediction extraction for metrics. Defaults to
+                "classification".
 
         Raises:
             TypeError: If `model` is not an instance of `torch.nn.Module`.
@@ -82,6 +86,7 @@ class Trainer:
             TypeError: If `optimizer` is not an instance of `torch.optim.Optimizer`.
             TypeError: If `train_loader` or `valid_loader` or `test_loader` are not instances of `torch.utils.data.DataLoader`.
             ValueError: If `scheduler_level` is not "epoch" or "batch".
+            ValueError: If `task` is not "classification" or "regression".
         """
         # Determining device automatically and handling AMP (if enabled)
         self.device_mgr = DeviceManager(enable_amp=enable_amp)
@@ -112,6 +117,13 @@ class Trainer:
         if test_loader is not None:
             self._validate_arg(test_loader, DataLoader, "test_loader")
             self.test_loader = test_loader
+
+        # Setting task type (classification or regression)
+        if task not in ("classification", "regression"):
+            raise ValueError(
+                "Invalid task: must be 'classification' or 'regression'"
+            )
+        self.task = task
 
         # Setting scheduler-specific attributes
         if scheduler_level not in ("epoch", "batch"):
@@ -181,7 +193,10 @@ class Trainer:
             tuple[TorchTensor, TorchTensor]: Tuple containing value of loss function and output tensor.
         """
         outputs = self.model(x_batch)
-        loss = self.criterion(outputs, y_batch.long())
+        if self.task == "classification":
+            loss = self.criterion(outputs, y_batch.long())
+        else:
+            loss = self.criterion(outputs.squeeze(-1), y_batch.float())
 
         return loss, outputs
 
@@ -422,7 +437,10 @@ class Trainer:
 
         # Updating info for computing extra metrics (if registered)
         if self.extra_metrics:
-            predictions = torch.argmax(outputs, dim=1)
+            if self.task == "classification":
+                predictions = torch.argmax(outputs, dim=1)
+            else:
+                predictions = outputs.squeeze(-1).detach()
             self.metrics_tracker.update_preds(
                 split=split,
                 preds=predictions.cpu().numpy(),

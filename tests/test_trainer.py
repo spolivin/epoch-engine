@@ -1034,3 +1034,117 @@ class TestTrainerRunResumeBest:
         trainer.run(epochs=1, resume_from_best=True, enable_tqdm=False)
 
         trainer.logger.warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# task parameter
+# ---------------------------------------------------------------------------
+
+
+def _make_regression_dataloader(n=8, features=4, batch_size=4):
+    """Creates a DataLoader with continuous targets for regression testing."""
+    dataset = TensorDataset(torch.randn(n, features), torch.randn(n))
+    return DataLoader(dataset, batch_size=batch_size)
+
+
+class TestTaskParameter:
+    def test_default_task_is_classification(self):
+        """task defaults to 'classification'."""
+        trainer = _make_trainer()
+        assert trainer.task == "classification"
+
+    def test_regression_task_stored(self):
+        """task='regression' is stored on the instance."""
+        model = nn.Linear(4, 1)
+        trainer = _make_trainer(
+            model=model,
+            task="regression",
+            train_loader=_make_regression_dataloader(),
+            valid_loader=_make_regression_dataloader(),
+        )
+        assert trainer.task == "regression"
+
+    def test_invalid_task_raises_value_error(self):
+        """Invalid task string raises ValueError."""
+        with pytest.raises(ValueError, match="task"):
+            _make_trainer(task="segmentation")
+
+    def test_classification_call_casts_targets_to_long(self):
+        """Classification __call__ produces finite loss with integer targets."""
+        trainer = _make_trainer()
+        x = torch.randn(4, 4)
+        y = torch.randint(0, 2, (4,))
+        loss, _ = trainer(x, y)
+        assert torch.isfinite(loss)
+
+    def test_regression_call_produces_finite_loss(self):
+        """Regression __call__ produces finite loss with float targets."""
+        model = nn.Linear(4, 1)
+        trainer = _make_trainer(
+            model=model,
+            criterion=nn.MSELoss(),
+            task="regression",
+            train_loader=_make_regression_dataloader(),
+            valid_loader=_make_regression_dataloader(),
+        )
+        x = torch.randn(4, 4)
+        y = torch.randn(4)
+        loss, _ = trainer(x, y)
+        assert torch.isfinite(loss)
+
+    def test_regression_collect_metrics_stores_raw_outputs(self):
+        """Regression _collect_metrics stores squeezed outputs, not argmax."""
+        model = nn.Linear(4, 1)
+        trainer = _make_trainer(
+            model=model,
+            criterion=nn.MSELoss(),
+            task="regression",
+            train_loader=_make_regression_dataloader(),
+            valid_loader=_make_regression_dataloader(),
+        )
+        trainer.extra_metrics = True
+        outputs = torch.tensor([[0.1], [0.5], [0.9], [0.3]])
+        labels = torch.randn(4)
+        trainer._collect_metrics(
+            loss=torch.tensor(0.1),
+            outputs=outputs,
+            labels=labels,
+            split="train",
+        )
+        preds = trainer.metrics_tracker.preds["train"]
+        # Should be raw values, not argmax (which would be all 0s)
+        assert any(abs(p - 0.0) > 1e-3 for p in preds)
+
+    def test_regression_call_batch_size_one_no_broadcast_error(self):
+        """squeeze(-1) prevents scalar collapse when batch_size=1."""
+        model = nn.Linear(4, 1)
+        trainer = _make_trainer(
+            model=model,
+            criterion=nn.MSELoss(),
+            task="regression",
+            train_loader=_make_regression_dataloader(),
+            valid_loader=_make_regression_dataloader(),
+        )
+        x = torch.randn(1, 4)  # batch_size=1 → output shape (1, 1)
+        y = torch.randn(1)  # target shape (1,)
+        loss, outputs = trainer(x, y)
+        assert outputs.shape == (1, 1)
+        assert torch.isfinite(loss)
+
+    def test_classification_collect_metrics_stores_argmax(self):
+        """Classification _collect_metrics stores argmax of outputs."""
+        trainer = _make_trainer()
+        trainer.extra_metrics = True
+        # High confidence for class 1
+        outputs = torch.tensor(
+            [[0.1, 0.9], [0.2, 0.8], [0.3, 0.7], [0.05, 0.95]]
+        )
+        labels = torch.randint(0, 2, (4,))
+        trainer._collect_metrics(
+            loss=torch.tensor(0.1),
+            outputs=outputs,
+            labels=labels,
+            split="train",
+        )
+        preds = trainer.metrics_tracker.preds["train"]
+        assert all(p == 1 for p in preds)
