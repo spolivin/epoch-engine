@@ -67,7 +67,7 @@ uv sync --all-extras
 Alternatively, with plain pip:
 
 ```bash
-pip install -e .[build,linters,metrics,test]
+pip install -e .[build,linters,metrics,test,vision]
 ```
 
 ### Pre-commit support
