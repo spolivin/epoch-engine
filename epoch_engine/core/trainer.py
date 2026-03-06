@@ -45,6 +45,9 @@ class Trainer:
         extra_metrics (bool): Flag for the case when additional metrics are computed.
         run_id (str): Trainer run identifier.
         metrics_to_plot (list[str]): List of metrics for which resulting plots need to be created.
+        callbacks (list[Callback]): List of registered callbacks.
+        interrupted (bool): Flag indicating whether training was interrupted by any callback.
+        task (str): Task type - "classification" or "regression". Controls target dtype casting and prediction extraction for metrics.
     """
 
     def __init__(
