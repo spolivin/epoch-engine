@@ -4,7 +4,9 @@
 # License: MIT License
 
 
-from typing import Any, Callable
+from collections import defaultdict
+from collections.abc import Callable
+from typing import Any
 
 
 class MetricsTracker:
@@ -12,7 +14,7 @@ class MetricsTracker:
 
     def __init__(self) -> None:
         """Instantiates an instance."""
-        self.metrics: dict[str, list[float]] = {}
+        self.metrics: defaultdict[str, list[float]] = defaultdict(list)
         self.metric_fns: dict[str, Callable] = {}
         self.preds: dict[str, list[Any]] = {}
         self.targets: dict[str, list[Any]] = {}
@@ -28,8 +30,6 @@ class MetricsTracker:
             name (str): Metric name.
             value (float): New value to be appended to losses.
         """
-        if name not in self.metrics:
-            self.metrics[name] = []
         self.metrics[name].append(value)
 
     def update_preds(self, split: str, preds, targets) -> None:
@@ -60,25 +60,18 @@ class MetricsTracker:
         for name, values in self.metrics.items():
             results[name] = sum(values) / len(values)
         # Registered metrics
-        if self.metric_fns is not {}:
-            # Computing train/validation metrics
-            if not test:
-                for name, fn in self.metric_fns.items():
-                    for split in ["train", "valid"]:
-                        if split in self.preds:
-                            results[name + f"/{split}"] = fn(
-                                self.targets[split], self.preds[split]
-                            )
-            # Computing test metrics
-            else:
-                for name, fn in self.metric_fns.items():
-                    results[name + "/test"] = fn(
-                        self.targets["test"], self.preds["test"]
-                    )
+        if self.metric_fns:
+            splits = ["test"] if test else ["train", "valid"]
+            for split in splits:
+                if split in self.preds:
+                    for name, fn in self.metric_fns.items():
+                        results[f"{name}/{split}"] = fn(
+                            self.targets[split], self.preds[split]
+                        )
         return results
 
     def reset(self) -> None:
         """Resets the metrics tracker."""
-        self.metrics = {}
+        self.metrics = defaultdict(list)
         self.preds = {}
         self.targets = {}
