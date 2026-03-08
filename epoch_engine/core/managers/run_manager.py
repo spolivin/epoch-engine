@@ -1,4 +1,4 @@
-"""Module containing `RunManager` class, responsible for handling run-specific events (checkpoints handling and run initialization)."""
+"""Run lifecycle management: directory creation, checkpoint I/O, and resume logic."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
@@ -16,12 +16,15 @@ from torch.optim import Optimizer
 
 @dataclass
 class RunInfo:
-    """Trainer run information output configuration.
+    """Metadata about an initialized training run.
 
     Attributes:
-        run_id (str): Trainer run's ID.
-        ckpts_path (Path): Path to run-specific checkpoints subfolder.
-        last_logged_epoch (int): Last epoch that Trainer has registered.
+        run_id (str): 6-character hex identifier for the run
+            (e.g. ``'a3f91c'``).
+        ckpts_path (Path): Absolute path to the run's checkpoint directory
+            (``runs/run_id=<hex>/checkpoints/``).
+        last_logged_epoch (int): Highest epoch number found in saved
+            checkpoints; ``0`` for a freshly created run.
     """
 
     run_id: str
@@ -30,37 +33,50 @@ class RunInfo:
 
 
 class RunManager:
-    """Manager of run-specific events (checkpoints handling and run initialization).
+    """Manages the on-disk run structure, checkpoint saving, and resume logic.
+
+    Each run lives under ``<base_dir>/run_id=<hex>/<ckpt_dir>/`` and contains
+    ``ckpt_epoch_N.pt`` files plus an optional ``best.pt`` written by
+    :class:`callbacks.BestCheckpoint`.
 
     Attributes:
-        base_dir (str): Base directory where run information is stored.
-        ckpt_dir (str): Directory storing Trainer checkpoints.
+        base_dir (Path): Root directory that holds all run subdirectories.
+        ckpt_dir (Path): Name of the checkpoint subdirectory within each run.
     """
 
     def __init__(
         self, base_dir: str = "runs", ckpt_dir: str = "checkpoints"
     ) -> None:
-        """Initializes a class instance.
-
+        """
         Args:
-            base_dir (str, optional): Base directory where run information is stored. Defaults to "runs".
-            ckpt_dir (str, optional): Directory storing Trainer checkpoints. Defaults to "checkpoints".
+            base_dir (str, optional): Root directory for all runs.
+                Defaults to ``"runs"``.
+            ckpt_dir (str, optional): Checkpoint subdirectory name inside
+                each run folder. Defaults to ``"checkpoints"``.
         """
         self.base_dir = Path(base_dir)
         self.ckpt_dir = Path(ckpt_dir)
 
     def init_run(self, run_id: str | None) -> RunInfo:
-        """Initializes a Trainer run.
+        """Initializes a training run, either new or resumed.
+
+        If ``run_id`` is ``None``, a new 6-char hex ID is generated and the
+        run directory is created. If ``run_id`` is provided, the existing run
+        directory is located and the highest saved epoch is resolved for
+        resuming.
 
         Args:
-            run_id (str | None): Trainer run's ID.
+            run_id (str | None): Existing run ID to resume, or ``None`` to
+                start a new run.
 
         Raises:
-            RuntimeError: Error raised when `run_id` is present but no checkpoint to start with.
-            ValueError: Error raised in case passed `run_id` cannot be found in history.
+            RuntimeError: If ``run_id`` exists on disk but its checkpoint
+                directory contains no ``ckpt_epoch_*.pt`` files.
+            ValueError: If ``run_id`` is provided but the corresponding run
+                directory does not exist.
 
         Returns:
-            RunInfo: Trainer run results as a config.
+            RunInfo: Resolved run metadata (ID, checkpoint path, last epoch).
         """
         # Checking the case when `run_id` is not None
         if run_id:
@@ -101,13 +117,16 @@ class RunManager:
     def save_checkpoint(
         self, path: Path, model: nn.Module, optimizer: Optimizer, epoch: int
     ) -> None:
-        """Saves checkpoint.
+        """Saves a checkpoint dict to ``path``.
+
+        The file contains ``{'epoch': int, 'model_state_dict': ...,
+        'optimizer_state_dict': ...}``.
 
         Args:
-            path (Path): Path to checkpoint.
-            model (nn.Module): Torch model instance.
-            optimizer (Optimizer): Torch optimizer instance.
-            epoch (int): Current epoch.
+            path (Path): Destination file path (e.g. ``ckpt_epoch_5.pt``).
+            model (nn.Module): Model whose ``state_dict`` is saved.
+            optimizer (Optimizer): Optimizer whose ``state_dict`` is saved.
+            epoch (int): Current epoch number stored alongside the states.
         """
         torch.save(
             {
@@ -118,14 +137,15 @@ class RunManager:
             path,
         )
 
-    def load_checkpoint(self, path: Path) -> Any:
-        """Loads checkpoint.
+    def load_checkpoint(self, path: Path) -> dict[str, Any]:
+        """Loads a checkpoint file and returns its contents.
 
         Args:
-            path (Path): Path to checkpoint.
+            path (Path): Path to the ``.pt`` checkpoint file.
 
         Returns:
-            Any: Loaded checkpoint.
+            dict[str, Any]: Dict with keys ``'epoch'``, ``'model_state_dict'``,
+                and ``'optimizer_state_dict'``.
         """
         checkpoint = torch.load(path, weights_only=True)
 

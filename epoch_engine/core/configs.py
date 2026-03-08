@@ -1,4 +1,4 @@
-"""Module for configurations."""
+"""Configuration dataclasses for the training framework."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
@@ -9,19 +9,17 @@ from dataclasses import dataclass
 
 @dataclass
 class MetricConfig:
-    """Metric configuration.
+    """Per-metric display and plot configuration.
 
-    This is a dataclass for configuring the metric name which
-    will be displayed in the training results, a way to compute it
-    and an option to provide a plot of it at the end of training and
-    validation.
+    Use this instead of a plain ``dict[str, Callable]`` when you need
+    per-metric control over the display name or PNG plot generation.
 
     Attributes:
-        name (str): Name of a metric.
-        fn (Callable): Function to use for computing the metric values.
-            Must follow the following signature: (y_true, y_pred) -> float.
-        plot (bool): Option to provide a plot of this metric at the end of
-            training and validation.
+        name (str): Metric name shown in logs and plot titles.
+        fn (Callable): Metric function with signature
+            ``(y_true, y_pred) -> float`` (sklearn-compatible).
+        plot (bool): If ``True``, a PNG plot is generated for this metric
+            at the end of training. Defaults to ``False``.
     """
 
     name: str

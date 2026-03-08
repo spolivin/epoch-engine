@@ -1,4 +1,4 @@
-"""Module for logging the computed metrics to a file."""
+"""Context-manager-based JSON logger for per-epoch metric history."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
@@ -10,15 +10,22 @@ from ..logger import TrainerLogger
 
 
 class MetricsLogger:
-    """Custom context manager for logging metrics to a file.
+    """Context manager that appends per-epoch metrics to a shared JSON log file.
+
+    On entry, loads (or creates) ``metrics_history.json`` under ``base_dir``
+    and locates the section for ``run_id``. On exit, always writes the
+    updated history back to disk, logging an error message if training was
+    interrupted.
 
     Attributes:
-        base_dir (str): Base directory where JSON file is to be stored.
-        filename (str): Path to a JSON file where to log metrics.
-        run_id (str): Trainer's run ID.
-        logger (logging.Logger): Configured logger for logging Trainer events.
-        current_run (dict[str, list[dict]]): Training logs belonging to current run ID.
-        training_process (dict[str, list[dict]]): Full training logs.
+        base_dir (Path): Root directory containing the JSON log file.
+        filename (Path): Full path to the JSON log file.
+        run_id (str): Run ID whose entries are being recorded.
+        logger (TrainerLogger): Logger used to report interruption events.
+        current_run (dict[str, list[dict]]): Reference to the in-memory
+            entry for the current run ID within ``training_process``.
+        training_process (dict[str, list[dict]]): Full deserialized contents
+            of the JSON log file (all runs).
     """
 
     def __init__(
@@ -28,15 +35,17 @@ class MetricsLogger:
         logfile: str = "metrics_history.json",
         truncate_after_epoch: int | None = None,
     ) -> None:
-        """Initializes a class instance.
-
+        """
         Args:
-            run_id (str): Trainer's run ID.
-            base_dir (str, optional): Base directory where JSON file is to be stored. Defaults to "runs".
-            logfile (str, optional): Name of a logfile. Defaults to "metrics_history.json".
-            truncate_after_epoch (int | None, optional): If set, drops any previously logged entries
-                with ``epoch > truncate_after_epoch`` when loading history. Used when resuming from a
-                checkpoint that is earlier than the last logged epoch (e.g. ``best.pt``). Defaults to None.
+            run_id (str): Run ID to record metrics under.
+            base_dir (str, optional): Root directory for the log file.
+                Defaults to ``"runs"``.
+            logfile (str, optional): JSON log filename inside ``base_dir``.
+                Defaults to ``"metrics_history.json"``.
+            truncate_after_epoch (int | None, optional): If set, drops any
+                previously logged entries with ``epoch > truncate_after_epoch``
+                when loading history. Used when resuming from an earlier
+                checkpoint (e.g. ``best.pt``). Defaults to ``None``.
         """
         self.base_dir = Path(base_dir)
         self.filename = self.base_dir / logfile
@@ -45,12 +54,13 @@ class MetricsLogger:
         self.logger = TrainerLogger()
 
     def __enter__(self) -> "MetricsLogger":
-        """Loads or creates a new history (JSON file) for the current run ID upon entry."""
+        """Calls ``load_history()`` and returns ``self``."""
         self.load_history()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Saves the recorded metrics history in JSON file upon error or exit."""
+        """Always calls ``save_history()``; logs an error message first if
+        training was interrupted by an exception or ``KeyboardInterrupt``."""
         if exc_type is not None:
             if isinstance(exc_val, KeyboardInterrupt):
                 self.logger.error(
@@ -63,7 +73,9 @@ class MetricsLogger:
         self.save_history()
 
     def load_history(self) -> None:
-        """Loads or creates a new history (JSON file) for the current run ID."""
+        """Loads ``metrics_history.json`` if it exists, or initialises an empty
+        structure. Locates (or creates) the entry for ``run_id`` and applies
+        ``truncate_after_epoch`` if set."""
         try:
             with open(self.filename) as h:
                 training_process = json.load(h)
@@ -93,10 +105,11 @@ class MetricsLogger:
             ]
 
     def log_metrics(self, metrics: dict[str, float | int]) -> None:
-        """Logs metrics.
+        """Appends ``metrics`` to the current run's entry in ``training_process``.
 
         Args:
-            metrics (dict[str, float  |  int]): Collection of metrics to be logged.
+            metrics (dict[str, float | int]): Epoch metrics dict to record,
+                e.g. ``{'epoch': 1, 'loss/train': 0.42, 'loss/valid': 0.51}``.
         """
         run_key = f"run_id={self.run_id}"
         # Finding the current run (should already be set by 'load_history')
@@ -110,6 +123,6 @@ class MetricsLogger:
                     break
 
     def save_history(self) -> None:
-        """Saves the recorded metrics history in JSON file."""
+        """Serialises ``training_process`` and writes it to ``self.filename``."""
         with open(self.filename, "w") as output:
             json.dump(self.training_process, output, indent=5)

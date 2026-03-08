@@ -1,4 +1,4 @@
-"""Module for plotting metrics."""
+"""PNG plot generation from the JSON metrics history produced by MetricsLogger."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
@@ -12,12 +12,15 @@ import numpy as np
 
 
 class MetricsPlotter:
-    """Class for plotting metrics.
+    """Reads the JSON metrics history and saves per-metric PNG plots.
+
+    Each plot shows training and validation curves over epochs and is saved
+    to ``<base_dir>/run_id=<hex>/<plot_save_dir>/<metric_name>.png``.
 
     Attributes:
-        base_dir (str): Base directory where plots are to be stored.
-        metrics_path (str): Path where to look for metric values.
-        plot_save_dir (str): Directory where to save plots.
+        base_dir (Path): Root directory containing the JSON log and run folders.
+        metrics_path (Path): Full path to the JSON metrics history file.
+        plot_save_dir (Path): Subdirectory name for plots within each run folder.
     """
 
     def __init__(
@@ -26,19 +29,31 @@ class MetricsPlotter:
         json_file: str = "metrics_history.json",
         plot_save_dir: str = "plots",
     ) -> None:
-        """Initializes a class instance.
-
+        """
         Args:
-            base_dir (str, optional): Base directory where plots are to be stored. Defaults to "runs".
-            json_file (str, optional): Name of a JSON file. Defaults to "metrics_history.json".
-            plot_save_dir (str, optional): Directory where to save plots. Defaults to "plots".
+            base_dir (str, optional): Root directory for runs and the JSON log.
+                Defaults to ``"runs"``.
+            json_file (str, optional): Filename of the JSON metrics history
+                produced by ``MetricsLogger``. Defaults to
+                ``"metrics_history.json"``.
+            plot_save_dir (str, optional): Subdirectory name created inside
+                each run folder to store PNG files. Defaults to ``"plots"``.
         """
         self.base_dir = Path(base_dir)
         self.metrics_path = self.base_dir / json_file
         self.plot_save_dir = Path(plot_save_dir)
 
     def _get_metric_values(self, metric_name: str, run_id: str) -> list[float]:
-        """Retrieves metric values for a specific metric name and run ID."""
+        """Reads ``self.metrics_path`` and extracts per-epoch values for one metric.
+
+        Args:
+            metric_name (str): Full metric key including split suffix, e.g.
+                ``'loss/train'`` or ``'accuracy/valid'``.
+            run_id (str): Run ID whose history is searched.
+
+        Returns:
+            list[float]: Ordered list of metric values, one per logged epoch.
+        """
         with open(self.metrics_path) as f:
             data = json.load(f)
 
@@ -50,7 +65,18 @@ class MetricsPlotter:
         ]
 
     def create_plot(self, metric_name: str, run_id: str) -> None:
-        """Creates a plot and saves it in set folder for a specific metric and run ID."""
+        """Generates and saves a train/validation curve PNG for one metric.
+
+        Reads ``<metric_name>/train`` and ``<metric_name>/valid`` from the
+        JSON history and saves the plot to
+        ``<base_dir>/run_id=<hex>/<plot_save_dir>/<metric_name>.png``,
+        creating the directory if needed.
+
+        Args:
+            metric_name (str): Base metric name without a split suffix, e.g.
+                ``'loss'`` or ``'accuracy'``.
+            run_id (str): Run ID whose history is plotted.
+        """
 
         plot_save_dir = self.base_dir / f"run_id={run_id}" / self.plot_save_dir
         plot_save_filepath = plot_save_dir / f"{metric_name}.png"

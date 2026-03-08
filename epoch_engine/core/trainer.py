@@ -1,4 +1,4 @@
-"""Module for Trainer functionality."""
+"""Main Trainer class that orchestrates PyTorch training and validation loops."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
@@ -25,29 +25,38 @@ from .metrics import (
 
 
 class Trainer:
-    """Trainer of PyTorch models.
+    """Orchestrates PyTorch model training, validation, checkpointing, and evaluation.
+
+    Handles the full training lifecycle: device placement, AMP, per-epoch
+    train/validation loops, metric tracking and logging, checkpoint saving,
+    callback dispatch, and optional metric plot generation.
 
     Attributes:
-        model (nn.Module): PyTorch model instance.
-        criterion (Callable): PyTorch loss function instance.
-        optimizer (Optimizer): PyTorch optimizer instance.
-        train_loader (Dataloader): Torch Dataloader for training set.
-        valid_loader (Dataloader): Torch Dataloader for validation set.
-        test_loader (Dataloader | None): Torch Dataloader for test set.
-        scheduler (LRScheduler | ReduceLROnPlateau | None): PyTorch scheduler instance.
-        scheduler_level (str): Level on which to apply scheduler.
-        last_epoch (int): Last epoch when training has been successfully finished.
-        metrics_tracker (MetricsTracker): Instance of `MetricsTracker` for handling computing metrics.
-        metrics_plotter (MetricsPlotter): Instance of `MetricsPlotter` for plotting metrics.
-        logger (logging.Logger): Configured logger for logging Trainer events.
-        device_mgr (DeviceManager): Instance of `DeviceManager` for handling device placement/AMP.
-        run_mgr (RunManager): Instance of `RunManager` for handing run-specific operations.
-        extra_metrics (bool): Flag for the case when additional metrics are computed.
-        run_id (str): Trainer run identifier.
-        metrics_to_plot (list[str]): List of metrics for which resulting plots need to be created.
-        callbacks (list[Callback]): List of registered callbacks.
-        interrupted (bool): Flag indicating whether training was interrupted by any callback.
-        task (str): Task type - "classification" or "regression". Controls target dtype casting and prediction extraction for metrics.
+        model (nn.Module): Model being trained (moved to the detected device).
+        criterion (Callable): Loss function.
+        optimizer (Optimizer): Optimizer instance.
+        train_loader (DataLoader): DataLoader for the training split.
+        valid_loader (DataLoader): DataLoader for the validation split.
+        test_loader (DataLoader | None): Optional DataLoader for the test split.
+        scheduler (LRScheduler | ReduceLROnPlateau | None): LR scheduler, or
+            ``None`` if not provided.
+        scheduler_level (str | None): ``'epoch'`` or ``'batch'``, or ``None``
+            when no scheduler is set.
+        last_epoch (int): Most recently completed epoch number (0 before any run).
+        metrics_tracker (MetricsTracker): Accumulates and computes epoch metrics.
+        metrics_plotter (MetricsPlotter): Generates PNG plots from metric history.
+        logger (TrainerLogger | None): Console logger; set when ``run()`` is called.
+        device_mgr (DeviceManager): Manages device selection and AMP.
+        run_mgr (RunManager): Manages checkpoint I/O and run directory structure.
+        extra_metrics (bool): ``True`` when custom metric functions are registered.
+        run_id (str | None): Current run identifier; set when ``run()`` is called.
+        metrics_to_plot (list[str]): Base metric names for which PNG plots are
+            generated (always includes ``'loss'``).
+        callbacks (list[Callback]): Registered callback instances.
+        interrupted (bool): ``True`` if a callback set ``should_stop=True`` during
+            the last ``run()`` call.
+        task (str): ``'classification'`` or ``'regression'`` — controls target
+            dtype casting and how predictions are extracted for custom metrics.
     """
 
     def __init__(
@@ -65,31 +74,38 @@ class Trainer:
         enable_amp: bool = False,
         task: str = "classification",
     ) -> None:
-        """Initializes a class instance.
-
+        """
         Args:
-            model (nn.Module): PyTorch model instance.
-            criterion (Callable): PyTorch loss function instance.
-            optimizer (Optimizer): PyTorch optimizer instance.
-            train_loader (Dataloader): Torch Dataloader for training set.
-            valid_loader (Dataloader): Torch Dataloader for validation set.
-            test_loader (Dataloader, optional): Torch Dataloader for test set. Defaults to None.
-            scheduler (LRScheduler | ReduceLROnPlateau, optional): PyTorch scheduler instance. Defaults to None.
-            scheduler_level (str, optional): Level on which to apply scheduler ("epoch" or "batch"). Defaults to "epoch".
-            metrics (list[MetricConfig] | dict[str, Callable], optional): Extra metrics to track. Defaults to None.
-            callbacks (list[Callback], optional): Callbacks to register. Defaults to None.
-            enable_amp (bool, optional): Flag to apply mixed precision training. Defaults to False.
-            task (str, optional): Task type - "classification" or "regression". Controls
-                target dtype casting and prediction extraction for metrics. Defaults to
-                "classification".
+            model (nn.Module): Model to train. Moved to the auto-detected device.
+            criterion (Callable): Loss function (e.g. ``nn.CrossEntropyLoss()``).
+            optimizer (Optimizer): Optimizer (e.g. ``torch.optim.Adam``).
+            train_loader (DataLoader): DataLoader for training batches.
+            valid_loader (DataLoader): DataLoader for validation batches.
+            test_loader (DataLoader, optional): DataLoader for test batches,
+                used by :meth:`evaluate`. Defaults to ``None``.
+            scheduler (LRScheduler | ReduceLROnPlateau, optional): LR
+                scheduler. Defaults to ``None``.
+            scheduler_level (str, optional): When to step the scheduler —
+                ``'epoch'`` or ``'batch'``. Defaults to ``'epoch'``.
+            metrics (list[MetricConfig] | dict[str, Callable], optional):
+                Custom metrics to track. A ``dict`` enables plotting for all;
+                a ``list[MetricConfig]`` allows per-metric plot control.
+                Defaults to ``None``.
+            callbacks (list[Callback], optional): Callbacks executed at
+                training lifecycle hooks. Defaults to ``None``.
+            enable_amp (bool, optional): Enable automatic mixed precision
+                (CUDA only). Defaults to ``False``.
+            task (str, optional): ``'classification'`` casts targets to
+                ``.long()`` and extracts predictions via ``argmax``.
+                ``'regression'`` casts targets to ``.float()`` and uses raw
+                outputs via ``squeeze(-1)``. Defaults to ``'classification'``.
 
         Raises:
-            TypeError: If `model` is not an instance of `torch.nn.Module`.
-            TypeError: If `criterion` is not a callable object.
-            TypeError: If `optimizer` is not an instance of `torch.optim.Optimizer`.
-            TypeError: If `train_loader` or `valid_loader` or `test_loader` are not instances of `torch.utils.data.DataLoader`.
-            ValueError: If `scheduler_level` is not "epoch" or "batch".
-            ValueError: If `task` is not "classification" or "regression".
+            TypeError: If ``model``, ``optimizer``, or any loader is not the
+                expected type, or if ``criterion`` is not callable.
+            ValueError: If ``scheduler_level`` is not ``'epoch'`` or
+                ``'batch'``, or ``task`` is not ``'classification'`` or
+                ``'regression'``.
         """
         # Determining device automatically and handling AMP (if enabled)
         self.device_mgr = DeviceManager(enable_amp=enable_amp)
@@ -179,25 +195,31 @@ class Trainer:
                 method(trainer=self, **kwargs)
 
     def reset_scheduler(self) -> None:
-        """Resetting and removing scheduler."""
+        """Removes the scheduler and sets ``scheduler_level`` to ``None``."""
         self.scheduler = None
         self.scheduler_level = None
 
     def __call__(
         self, x_batch: torch.Tensor, y_batch: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Computes loss and model outputs.
+        """Runs a forward pass and computes the loss.
+
+        For ``'classification'``, targets are cast to ``.long()``. For
+        ``'regression'``, outputs are squeezed via ``squeeze(-1)`` and targets
+        cast to ``.float()``.
 
         Args:
-            x_batch (TorchTensor): Batch of examples.
-            y_batch (TorchTensor): Batch of labels.
+            x_batch (torch.Tensor): Batch of input examples.
+            y_batch (torch.Tensor): Batch of targets.
 
         Returns:
-            tuple[TorchTensor, TorchTensor]: Tuple containing value of loss function and output tensor.
+            tuple[torch.Tensor, torch.Tensor]: ``(loss, outputs)`` where
+                ``outputs`` are the raw model logits/predictions.
         """
         outputs = self.model(x_batch)
         if self.task == "classification":
             loss = self.criterion(outputs, y_batch.long())
+        # For regression, squeezing outputs to ensure they have the same shape as targets (e.g. [B, 1] -> [B])
         else:
             loss = self.criterion(outputs.squeeze(-1), y_batch.float())
 
@@ -212,24 +234,29 @@ class Trainer:
         clip_grad_norm: float | None = None,
         resume_from_best: bool = False,
     ) -> None:
-        """Launches a training/validation procedure.
+        """Runs the training and validation loops for the given number of epochs.
 
-        When `run_id` is not provided, either initiates a new training run, where `runs`
-        folder is created with subfolders/auxiliary files for this run, or resumes the run
-        specified in `run_id` attribute (if already set up).
-
-        When providing `run_id`, checks if training with this ID exists in history and resumes
-        training from the last checkpoint.
+        Starts a new run (generating a fresh ``run_id``) or resumes an existing
+        one. On resume, model and optimizer states are loaded from the last saved
+        checkpoint (or ``best.pt`` if ``resume_from_best=True``). PNG metric
+        plots are always generated in a ``finally`` block, even if training is
+        interrupted.
 
         Args:
-            epochs (int): Number of epochs to train for.
-            run_id (str | None, optional): Trainer run identifier. Defaults to None.
-            seed (int, optional): Random number generator seed. Defaults to 42.
-            enable_tqdm (bool, optional): Flag to enable progress bar. Defaults to True.
-            clip_grad_norm (float, optional): Max norm for gradient clipping. Defaults to None.
-            resume_from_best (bool, optional): If True and a ``best.pt`` checkpoint exists,
-                resume from it instead of the last epoch checkpoint. Requires
-                ``BestCheckpoint`` to have been used in a prior run. Defaults to False.
+            epochs (int): Number of epochs to train.
+            run_id (str | None, optional): Run ID to resume. If ``None``,
+                reuses ``self.run_id`` if set, otherwise starts a new run.
+                Defaults to ``None``.
+            seed (int, optional): Random seed for reproducibility. Defaults
+                to ``42``.
+            enable_tqdm (bool, optional): Show tqdm progress bars. Defaults
+                to ``True``.
+            clip_grad_norm (float | None, optional): Maximum gradient norm
+                for clipping. Defaults to ``None``.
+            resume_from_best (bool, optional): If ``True`` and ``best.pt``
+                exists, resume from it instead of the last epoch checkpoint.
+                Requires :class:`callbacks.BestCheckpoint` to have been used previously.
+                Defaults to ``False``.
         """
         run_info = self.run_mgr.init_run(run_id=run_id or self.run_id)
         self.run_id = run_info.run_id
@@ -453,11 +480,11 @@ class Trainer:
     def _register_metrics(
         self, metrics: list[MetricConfig] | dict[str, Callable]
     ) -> None:
-        """Registers a collection of metrics.
+        """Registers custom metric functions with ``MetricsTracker``.
 
-        Metrics can be passed as either in the form of "str-Callable" dictionary,
-        in which case all such metrics will be set to be plotted at the end of trainer
-        run, or as list[MetricConfig] in case of needing to "turn off" plotting some metrics.
+        A ``dict[str, Callable]`` is converted to ``list[MetricConfig]`` with
+        ``plot=True`` for all entries. A ``list[MetricConfig]`` is used as-is,
+        allowing per-metric plot control. Sets ``self.extra_metrics = True``.
         """
         # Checking if metrics are dict (setting plotting to True for all)
         if isinstance(metrics, dict):
@@ -484,7 +511,17 @@ class Trainer:
 
     @torch.no_grad()
     def evaluate(self, loader: DataLoader | None = None) -> dict[str, float]:
-        """Evaluates the model on test set."""
+        """Evaluates the model on the test set and returns metric scores.
+
+        Args:
+            loader (DataLoader | None, optional): DataLoader to evaluate on.
+                Falls back to ``self.test_loader`` if ``None``. Raises
+                ``ValueError`` if neither is available. Defaults to ``None``.
+
+        Returns:
+            dict[str, float]: Metric scores keyed as ``'<name>/test'``,
+                e.g. ``{'loss/test': 0.31, 'accuracy/test': 0.94}``.
+        """
         loader = loader or getattr(self, "test_loader", None)
         if loader is None:
             raise ValueError("Cannot evaluate since test loader is not set")

@@ -35,7 +35,7 @@ class Callback(ABC):
         pass
 
     def on_epoch_start(self, trainer: "Trainer", epoch: int) -> None:
-        """Called at the beginning of each epoch."""
+        """Called at the beginning of each epoch (``epoch`` is 0-indexed)."""
         pass
 
     def on_epoch_end(
@@ -44,7 +44,12 @@ class Callback(ABC):
         epoch: int,
         metrics: dict[str, float],
     ) -> None:
-        """Called at the end of each epoch after metrics are computed."""
+        """Called at the end of each epoch after metrics are computed.
+
+        ``metrics`` contains the full epoch metric dict with keys like
+        ``'loss/train'``, ``'loss/valid'``, and any custom metric names.
+        ``epoch`` is 0-indexed.
+        """
         pass
 
     def on_batch_start(self, trainer: "Trainer", batch_idx: int) -> None:
@@ -54,7 +59,7 @@ class Callback(ABC):
     def on_batch_end(
         self, trainer: "Trainer", batch_idx: int, loss: float
     ) -> None:
-        """Called at the end of each training batch."""
+        """Called at the end of each training batch. ``loss`` is the scalar batch loss."""
         pass
 
     def on_validation_start(self, trainer: "Trainer") -> None:
@@ -64,26 +69,30 @@ class Callback(ABC):
     def on_validation_end(
         self, trainer: "Trainer", valid_metrics: dict[str, float]
     ) -> None:
-        """Called at the end of validation."""
+        """Called at the end of validation. ``valid_metrics`` mirrors the
+        validation portion of the epoch metrics dict."""
         pass
 
     def on_checkpoint_save(
         self, trainer: "Trainer", checkpoint_path: Path
     ) -> None:
-        """Called after a checkpoint is saved."""
+        """Called after a checkpoint is saved. ``checkpoint_path`` points to
+        the just-written ``ckpt_epoch_N.pt`` file."""
         pass
 
 
 class EarlyStopping(Callback):
     """Stop training when a monitored metric stops improving.
 
+    Sets ``should_stop=True`` after ``patience`` consecutive epochs with no
+    improvement; the trainer halts at the end of that epoch.
+
     Args:
-        monitor: Name of metric to monitor (e.g., 'loss/valid', 'accuracy/valid')
-        patience: Number of epochs with no improvement after which to stop
-        mode: One of 'min' or 'max'. In 'min' mode, stops when metric stops decreasing;
-              in 'max' mode, stops when metric stops increasing
-        min_delta: Minimum change to qualify as an improvement
-        verbose: Whether to print messages when stopping
+        monitor: Metric key to watch (e.g. ``'loss/valid'``, ``'accuracy/valid'``).
+        patience: Epochs with no improvement before stopping.
+        mode: ``'min'`` or ``'max'`` — direction of improvement.
+        min_delta: Minimum change to qualify as an improvement.
+        verbose: Whether to log counter updates and the stop event.
 
     Example:
         >>> early_stop = EarlyStopping(
@@ -92,7 +101,7 @@ class EarlyStopping(Callback):
         ...     mode='min',
         ...     min_delta=0.001
         ... )
-        >>> trainer_config = TrainerConfig(..., callbacks=[early_stop])
+        >>> trainer = Trainer(..., callbacks=[early_stop])
     """
 
     def __init__(
@@ -122,7 +131,8 @@ class EarlyStopping(Callback):
         epoch: int,
         metrics: dict[str, float],
     ) -> None:
-
+        """Checks the monitored metric and increments the no-improvement
+        counter; sets ``should_stop=True`` once ``patience`` is exceeded."""
         if self.monitor not in metrics:
             if epoch == 1 and self.verbose:
                 trainer.logger.warning(
@@ -153,6 +163,8 @@ class EarlyStopping(Callback):
                     )
 
     def _is_improvement(self, current: float) -> bool:
+        """Returns ``True`` if ``current`` improves on ``best_score`` by at
+        least ``min_delta`` in the configured direction."""
         if self.mode == "min":
             return current < (self.best_score - self.min_delta)
         else:
@@ -174,7 +186,7 @@ class BestCheckpoint(Callback):
 
     Example:
         >>> best_ckpt = BestCheckpoint(monitor='loss/valid', mode='min')
-        >>> trainer_config = TrainerConfig(..., callbacks=[best_ckpt])
+        >>> trainer = Trainer(..., callbacks=[best_ckpt])
     """
 
     def __init__(
@@ -215,6 +227,8 @@ class BestCheckpoint(Callback):
     def on_checkpoint_save(
         self, trainer: "Trainer", checkpoint_path: Path
     ) -> None:
+        """Copies ``checkpoint_path`` to ``best.pt`` if a new best was
+        recorded in ``on_epoch_end``; otherwise does nothing."""
         if not getattr(self, "_new_best", False):
             return
         best_path = checkpoint_path.parent / "best.pt"
@@ -226,6 +240,8 @@ class BestCheckpoint(Callback):
             )
 
     def _is_improvement(self, current: float) -> bool:
+        """Returns ``True`` if ``current`` improves on ``best_score`` by at
+        least ``min_delta`` in the configured direction."""
         if self.mode == "min":
             return current < (self.best_score - self.min_delta)
         return current > (self.best_score + self.min_delta)
@@ -243,7 +259,7 @@ class CheckpointPruner(Callback):
 
     Example:
         >>> pruner = CheckpointPruner(keep_last_n=2)
-        >>> trainer_config = TrainerConfig(..., callbacks=[BestCheckpoint(), pruner])
+        >>> trainer = Trainer(..., callbacks=[BestCheckpoint(), pruner])
     """
 
     def __init__(self, keep_last_n: int = 1):
@@ -254,6 +270,8 @@ class CheckpointPruner(Callback):
     def on_checkpoint_save(
         self, trainer: "Trainer", checkpoint_path: Path
     ) -> None:
+        """Deletes the oldest ``ckpt_epoch_*.pt`` files, keeping the
+        ``keep_last_n`` most recent. ``best.pt`` is never removed."""
         epoch_ckpts = sorted(
             checkpoint_path.parent.glob("ckpt_epoch_*.pt"),
             key=lambda f: int(f.stem.split("_")[-1]),
@@ -265,18 +283,18 @@ class CheckpointPruner(Callback):
 class NanCallback(Callback):
     """Stop training if any metric value is NaN.
 
-    Sets ``should_stop=True`` at the end of any epoch where NaN is detected.
-    The trainer's stop check will then halt training after ``on_epoch_end``
-    completes.
+    Sets ``should_stop=True`` at the end of any epoch where NaN is detected;
+    the trainer reads this flag after ``on_epoch_end`` and halts.
 
     Args:
-        monitor: Specific metric keys to check. If None, checks all numeric
-                 metrics in the epoch metrics dict. Defaults to None.
-        verbose: Whether to log an error message on detection. Defaults to True.
+        monitor: Specific metric keys to check. If ``None``, all numeric
+            values in the epoch metrics dict are checked. Defaults to ``None``.
+        verbose: Whether to log a warning message when NaN is detected.
+            Defaults to ``True``.
 
     Example:
         >>> nan_cb = NanCallback()
-        >>> trainer_config = TrainerConfig(..., callbacks=[nan_cb])
+        >>> trainer = Trainer(..., callbacks=[nan_cb])
     """
 
     def __init__(
@@ -294,6 +312,8 @@ class NanCallback(Callback):
         epoch: int,
         metrics: dict[str, float],
     ) -> None:
+        """Scans the monitored metrics for NaN and sets ``should_stop=True``
+        if any are found."""
         candidates = (
             {k: metrics[k] for k in self.monitor if k in metrics}
             if self.monitor is not None

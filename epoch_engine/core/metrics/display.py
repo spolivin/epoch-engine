@@ -1,4 +1,4 @@
-"""Module for displaying metrics in a clean format."""
+"""Formatted two-column train/valid metric table for epoch summaries."""
 
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
@@ -12,12 +12,19 @@ def format_metrics(
     metrics: dict[str, float],
     use_tqdm: bool = True,
 ) -> None:
-    """Display metrics in a clean table format.
+    """Print a two-column train/valid summary table for one epoch.
+
+    Metrics are grouped by base name and displayed as aligned rows with
+    ``Train`` and ``Valid`` columns, surrounded by ``=`` / ``-`` separators.
+    Keys not ending in ``/train`` or ``/valid`` are silently ignored.
 
     Args:
-        epoch: Current epoch number
-        metrics: Metrics dict (contains train and valid metrics)
-        use_tqdm: Whether to use tqdm.write (for compatibility with progress bars)
+        epoch: Epoch number shown in the header (used as-is, no offset applied).
+        metrics: Dict with keys like ``'loss/train'``, ``'accuracy/valid'``,
+            as produced by ``MetricsTracker``.
+        use_tqdm: If ``True``, output goes through ``tqdm.write`` to avoid
+            corrupting progress bars; falls back to ``print`` otherwise.
+            Defaults to ``True``.
     """
 
     def _write(msg: str):
