@@ -30,17 +30,17 @@ class MetricsTracker:
         Attributes set here:
             metrics (defaultdict[str, list[float]]): Named scalar values
                 accumulated across batches (e.g. per-batch losses).
-            metric_fns (dict[str, Callable]): Registered metric functions
+            metric_fns (dict[str, Callable[..., float]]): Registered metric functions
                 keyed by metric name; persists across :meth:`reset` calls.
             preds (dict[str, list[Any]]): Per-split accumulated predictions.
             targets (dict[str, list[Any]]): Per-split accumulated targets.
         """
         self.metrics: defaultdict[str, list[float]] = defaultdict(list)
-        self.metric_fns: dict[str, Callable] = {}
+        self.metric_fns: dict[str, Callable[..., float]] = {}
         self.preds: dict[str, list[Any]] = {}
         self.targets: dict[str, list[Any]] = {}
 
-    def register_metric(self, name: str, fn: Callable) -> None:
+    def register_metric(self, name: str, fn: Callable[..., float]) -> None:
         """Registers a custom metric function to be evaluated at epoch end.
 
         Args:
@@ -60,7 +60,7 @@ class MetricsTracker:
         """
         self.metrics[name].append(value)
 
-    def update_preds(self, split: str, preds, targets) -> None:
+    def update_preds(self, split: str, preds: Any, targets: Any) -> None:
         """Extends the accumulated predictions and targets for a given split.
 
         Args:

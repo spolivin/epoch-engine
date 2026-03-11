@@ -23,5 +23,5 @@ class MetricConfig:
     """
 
     name: str
-    fn: Callable
+    fn: Callable[..., float]
     plot: bool = False

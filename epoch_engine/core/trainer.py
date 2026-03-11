@@ -62,14 +62,16 @@ class Trainer:
     def __init__(
         self,
         model: nn.Module,
-        criterion: Callable,
+        criterion: Callable[..., torch.Tensor],
         optimizer: Optimizer,
         train_loader: DataLoader,
         valid_loader: DataLoader,
         test_loader: DataLoader | None = None,
         scheduler: LRScheduler | ReduceLROnPlateau | None = None,
         scheduler_level: str = "epoch",
-        metrics: list[MetricConfig] | dict[str, Callable] | None = None,
+        metrics: (
+            list[MetricConfig] | dict[str, Callable[..., float]] | None
+        ) = None,
         callbacks: list[Callback] | None = None,
         enable_amp: bool = False,
         task: str = "classification",
@@ -176,7 +178,7 @@ class Trainer:
         self.logger = None  # Initialized in `run` once `run_id` is set
 
     @staticmethod
-    def _validate_arg(value, expected_type, name: str) -> None:
+    def _validate_arg(value: object, expected_type: type, name: str) -> None:
         """Raises TypeError if `value` is not an instance of `expected_type`."""
         if not isinstance(value, expected_type):
             raise TypeError(
@@ -187,7 +189,7 @@ class Trainer:
         """Returns True if any callback has requested an early stop."""
         return any(getattr(cb, "should_stop", False) for cb in self.callbacks)
 
-    def _call_callbacks(self, hook: str, **kwargs):
+    def _call_callbacks(self, hook: str, **kwargs) -> None:
         """Call a specific hook on all callbacks."""
         for callback in self.callbacks:
             method = getattr(callback, hook, None)
@@ -478,7 +480,7 @@ class Trainer:
             )
 
     def _register_metrics(
-        self, metrics: list[MetricConfig] | dict[str, Callable]
+        self, metrics: list[MetricConfig] | dict[str, Callable[..., float]]
     ) -> None:
         """Registers custom metric functions with ``MetricsTracker``.
 

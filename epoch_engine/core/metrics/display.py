@@ -27,7 +27,7 @@ def format_metrics(
             Defaults to ``True``.
     """
 
-    def _write(msg: str):
+    def _write(msg: str) -> None:
         if use_tqdm:
             tqdm.write(msg)
         else:

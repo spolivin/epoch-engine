@@ -5,6 +5,7 @@
 
 import json
 from pathlib import Path
+from types import TracebackType
 
 from ..logger import TrainerLogger
 
@@ -58,7 +59,12 @@ class MetricsLogger:
         self.load_history()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Always calls ``save_history()``; logs an error message first if
         training was interrupted by an exception or ``KeyboardInterrupt``."""
         if exc_type is not None:

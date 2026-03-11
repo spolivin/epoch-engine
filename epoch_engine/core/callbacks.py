@@ -111,7 +111,7 @@ class EarlyStopping(Callback):
         mode: str = "min",
         min_delta: float = 0.0,
         verbose: bool = True,
-    ):
+    ) -> None:
         self.monitor = monitor
         self.patience = patience
         self.mode = mode
@@ -195,7 +195,7 @@ class BestCheckpoint(Callback):
         mode: str = "min",
         min_delta: float = 0.0,
         verbose: bool = True,
-    ):
+    ) -> None:
         if mode not in ("min", "max"):
             raise ValueError(f"mode must be 'min' or 'max', got {mode}")
         self.monitor = monitor
@@ -262,7 +262,7 @@ class CheckpointPruner(Callback):
         >>> trainer = Trainer(..., callbacks=[BestCheckpoint(), pruner])
     """
 
-    def __init__(self, keep_last_n: int = 1):
+    def __init__(self, keep_last_n: int = 1) -> None:
         if keep_last_n < 1:
             raise ValueError(f"keep_last_n must be >= 1, got {keep_last_n}")
         self.keep_last_n = keep_last_n
@@ -301,7 +301,7 @@ class NanCallback(Callback):
         self,
         monitor: list[str] | None = None,
         verbose: bool = True,
-    ):
+    ) -> None:
         self.monitor = monitor
         self.verbose = verbose
         self.should_stop = False

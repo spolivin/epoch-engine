@@ -15,10 +15,10 @@ class Encoder(nn.Module):
     ``encoder_channels``, progressively downsampling the spatial dimensions.
     """
 
-    def __init__(self, encoder_channels: tuple[int]) -> None:
+    def __init__(self, encoder_channels: tuple[int, ...]) -> None:
         """
         Args:
-            encoder_channels (tuple[int]): Channel sizes for each stage,
+            encoder_channels (tuple[int, ...]): Channel sizes for each stage,
                 e.g. ``(3, 32, 64)`` creates two conv blocks: 3 -> 32 and 32 -> 64.
         """
         super().__init__()
@@ -75,10 +75,12 @@ class Decoder(nn.Module):
     ``num_labels`` outputs (logits).
     """
 
-    def __init__(self, decoder_features: tuple[int], num_labels: int) -> None:
+    def __init__(
+        self, decoder_features: tuple[int, ...], num_labels: int
+    ) -> None:
         """
         Args:
-            decoder_features (tuple[int]): Feature sizes for each hidden
+            decoder_features (tuple[int, ...]): Feature sizes for each hidden
                 stage, e.g. ``(512, 256)`` creates one Linear→Sigmoid block.
             num_labels (int): Number of output classes/logits.
         """
@@ -138,17 +140,17 @@ class EDNet(nn.Module):
     def __init__(
         self,
         in_channels: int,
-        encoder_channels: tuple[int],
-        decoder_features: tuple[int],
+        encoder_channels: tuple[int, ...],
+        decoder_features: tuple[int, ...],
         num_labels: int,
     ) -> None:
         """
         Args:
             in_channels (int): Number of channels in the input image
                 (e.g. 1 for grayscale, 3 for RGB).
-            encoder_channels (tuple[int]): Channel sizes for the encoder
+            encoder_channels (tuple[int, ...]): Channel sizes for the encoder
                 stages (excluding ``in_channels`` which is prepended).
-            decoder_features (tuple[int]): Feature sizes for the decoder
+            decoder_features (tuple[int, ...]): Feature sizes for the decoder
                 hidden stages. The first value must match the flattened
                 encoder output size.
             num_labels (int): Number of output classes.
@@ -267,7 +269,7 @@ class ResNet(nn.Module):
         self,
         in_channels: int,
         num_blocks: list[int],
-        block: BasicBlock = BasicBlock,
+        block: type[BasicBlock] = BasicBlock,
         num_classes: int = 10,
     ) -> None:
         """
@@ -314,7 +316,7 @@ class ResNet(nn.Module):
 
     def _make_resnet_layer(
         self,
-        block: BasicBlock,
+        block: type[BasicBlock],
         out_channels: int,
         num_blocks: int,
         stride: int,

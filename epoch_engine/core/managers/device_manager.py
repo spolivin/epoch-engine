@@ -3,8 +3,12 @@
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
 
+from typing import TypeVar
+
 import torch
 import torch.nn as nn
+
+_T = TypeVar("_T", nn.Module, torch.Tensor)
 
 
 class DeviceManager:
@@ -67,15 +71,14 @@ class DeviceManager:
         else:
             torch.manual_seed(seed)
 
-    def move_to_device(
-        self, obj: nn.Module | torch.Tensor
-    ) -> nn.Module | torch.Tensor:
+    def move_to_device(self, obj: _T) -> _T:
         """Moves ``obj`` to ``self.device`` and returns it.
 
         Args:
             obj (nn.Module | torch.Tensor): Model or tensor to move.
 
         Returns:
-            nn.Module | torch.Tensor: The same object on ``self.device``.
+            nn.Module | torch.Tensor: The same object, now on ``self.device``,
+                preserving the input type.
         """
         return obj.to(self.device)

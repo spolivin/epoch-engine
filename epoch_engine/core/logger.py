@@ -15,7 +15,7 @@ class TrainerLogger:
     or ``print(..., file=sys.stderr)`` depending on severity.
     """
 
-    def __init__(self, enable_tqdm: bool = True):
+    def __init__(self, enable_tqdm: bool = True) -> None:
         """
         Args:
             enable_tqdm (bool): If ``True``, use ``tqdm.write`` for all
