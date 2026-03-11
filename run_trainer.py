@@ -1,4 +1,5 @@
 import argparse
+from argparse import Namespace
 from functools import partial
 
 import torch
@@ -25,8 +26,13 @@ from epoch_engine.models import EDNet, ResNet
 
 
 def prepare_classification_data(
-    download_dir="./data", batch_size=32, num_workers=0
-):
+    download_dir: str = "./data", batch_size: int = 32, num_workers: int = 0
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """Downloads MNIST and returns (train, valid, test) DataLoaders.
+
+    The test set is split: the first 1000 samples become the validation
+    loader and the remainder become the test loader.
+    """
     transform = transforms.Compose([transforms.ToTensor()])
     train_ds = datasets.MNIST(
         root=download_dir, train=True, download=True, transform=transform
@@ -53,8 +59,12 @@ def prepare_classification_data(
 
 
 def prepare_regression_data(
-    n_train=2000, n_valid=400, n_test=200, n_features=16, batch_size=32
-):
+    n_train: int = 2000,
+    n_valid: int = 400,
+    n_test: int = 200,
+    n_features: int = 16,
+    batch_size: int = 32,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Synthetic regression dataset: y = X @ w + noise."""
     torch.manual_seed(0)
     w = torch.randn(n_features)
@@ -93,7 +103,8 @@ CLASSIFICATION_MODELS = {
 }
 
 
-def build_regression_model(n_features=16):
+def build_regression_model(n_features: int = 16) -> nn.Sequential:
+    """Builds a three-layer MLP for regression with ``n_features`` inputs."""
     return nn.Sequential(
         nn.Linear(n_features, 64),
         nn.ReLU(),
@@ -103,7 +114,8 @@ def build_regression_model(n_features=16):
     )
 
 
-def run_classification(args):
+def run_classification(args: Namespace) -> None:
+    """Trains and evaluates a classification model on MNIST."""
     if args.model not in CLASSIFICATION_MODELS:
         raise ValueError(
             f"Unsupported model. Choose from: {list(CLASSIFICATION_MODELS)}"
@@ -159,7 +171,8 @@ def run_classification(args):
         print(f"Test metrics after resume: {trainer.evaluate()}")
 
 
-def run_regression(args):
+def run_regression(args: Namespace) -> None:
+    """Trains and evaluates a regression model on a synthetic dataset."""
     n_features = 16
     train_loader, valid_loader, test_loader = prepare_regression_data(
         n_features=n_features
@@ -211,7 +224,7 @@ def run_regression(args):
         print(f"Test metrics after resume: {trainer.evaluate()}")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Run Trainer Example")
     parser.add_argument(
         "--task",
