@@ -21,8 +21,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-build = ["setuptools", "wheel", "build", "twine"]
-linters = ["black", "isort", "pre-commit"]
+pre-commit = ["pre-commit"]
 metrics = ["scikit-learn"]
 test = ["pytest"]
 vision = ["torchvision>=0.20.0"]
