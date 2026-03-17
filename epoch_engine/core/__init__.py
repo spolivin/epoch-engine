@@ -1,3 +1,5 @@
+"""Core training components: Trainer, callbacks, configs, logger, managers, and metrics."""
+
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
 

@@ -1,3 +1,5 @@
+"""Metric tracking, logging, plotting, and display utilities."""
+
 # Author: Sergey Polivin <s.polivin@gmail.com>
 # License: MIT License
 
