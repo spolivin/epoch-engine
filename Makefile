@@ -9,6 +9,6 @@ run-trainer-regression:
 run-tests:
 	uv run pytest
 build:
-	uv run python -m build
+	uv build
 build-check:
-	uv run twine check dist/*
+	uvx twine check dist/*
