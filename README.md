@@ -46,7 +46,7 @@ The package can be installed as follows:
 pip install epoch-engine
 
 # Installing additional optional dependencies
-pip install epoch-engine[build,linters]
+pip install epoch-engine[metrics,vision]
 ```
 
 ### Development mode
@@ -67,7 +67,7 @@ uv sync --all-extras
 Alternatively, with plain pip:
 
 ```bash
-pip install -e .[build,linters,metrics,test,vision]
+pip install -e .[pre-commit,metrics,test,vision]
 ```
 
 ### Pre-commit support
@@ -78,7 +78,7 @@ The repository provides support for running pre-commit checks via hooks defined 
 pre-commit install
 ```
 
-> `pre-commit` will already be available after running `uv sync --all-extras` or `pip install epoch-engine[linters]`
+> `pre-commit` will already be available after running `uv sync --all-extras` or `pip install epoch-engine[pre-commit]`
 
 A pre-push hook is also configured to run the test suite automatically before each `git push`, but only when the push includes at least one `.py` file. To activate it:
 
